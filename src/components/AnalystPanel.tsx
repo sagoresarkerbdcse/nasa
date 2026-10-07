@@ -41,6 +41,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_hotspot_trends: "Hot-spot analysis",
   get_season_timing: "Season timing",
   get_outlook: "Outlook model",
+  get_fire_science: "Fire science",
   get_live_fires: "Live FIRMS feed",
   update_dashboard: "Updated your map",
 };

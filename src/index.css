@@ -302,3 +302,7 @@ input[type="range"].fc-range::-moz-range-thumb {
     transition-duration: 0.01ms !important;
   }
 }
+
+.fc-pixelated {
+  image-rendering: pixelated;
+}

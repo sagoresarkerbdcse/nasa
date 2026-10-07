@@ -40,6 +40,28 @@ export async function offlineAgent({ grounding, mode, question, focus, ctx, send
   else if (mode === "brief" || /brief|warning|responder/i.test(question)) text = await brief(grounding, call);
   else {
     const q = question.toLowerCase();
+    // Country mentioned? (longest name first so "South Sudan" beats "Sudan")
+    const countryHit = ctx.global
+      ? [...ctx.global.cf.countries.map((c) => c.name)].sort((x, y) => y.length - x.length).find((n) => n !== "Bangladesh" && q.includes(n.toLowerCase()))
+      : undefined;
+    const worldHit = /\b(world|global|planet|earth)\b/.test(q);
+    if (ctx.global && /which countr|top countr|countries (burn|with|have)|most fires in the world|rank/.test(q)) {
+      const by = /increas|rising|grow|worse/.test(q) ? "trend" : /decreas|declin|fall/.test(q) ? "trend" : /intens|frp|power/.test(q) ? "intensity" : /night/.test(q) ? "night_share" : "fire_days";
+      const r = await call("rank_countries", { by, order: /decreas|declin|fall|lowest|least/.test(q) ? "lowest" : "highest", limit: 8 });
+      if (r.rows?.[0]) await call("update_dashboard", { country: r.rows[0].country, layer: "activity", tab: "trends" });
+      text = rankCountries(r);
+    } else if ((countryHit || worldHit) && SCIENCE_RE.test(q)) {
+      const area = { country: countryHit ?? "World" };
+      const r = await call("get_fire_science", area);
+      await call("update_dashboard", { ...area, tab: "science" });
+      text = science(r);
+    } else if (countryHit || worldHit) {
+      const area = { country: countryHit ?? "World" };
+      const ov = await call("get_area_overview", area);
+      const hs = await call("get_hotspot_trends", area);
+      await call("update_dashboard", { ...area, layer: /hot ?spot/.test(q) ? "hotspots" : "activity", tab: /trend|season|declin|increas/.test(q) ? "trends" : "calendar" });
+      text = countryOverview(ov, hs);
+    } else {
     const region = REGIONS.find((r) => q.includes(r.short.toLowerCase()) || q.includes(r.name.toLowerCase()) || (r.id === "cht" && /chittagong|hill tracts/.test(q)));
     const area: Record<string, unknown> = region ? { region: region.id } : {};
     const g = region ? buildGrounding(ctx.grid, region.bbox, region.name) : grounding;
@@ -51,6 +73,10 @@ export async function offlineAgent({ grounding, mode, question, focus, ctx, send
       const r = await call("get_live_fires", area);
       await call("update_dashboard", { ...area, layer: "live", tab: "live" });
       text = live(r);
+    } else if (SCIENCE_RE.test(q)) {
+      const r = await call("get_fire_science", area);
+      await call("update_dashboard", { ...area, tab: "science" });
+      text = science(r);
     } else if (/forecast|outlook|next month|coming|predict|expect|upcoming/.test(q)) {
       const r = await call("get_outlook", { ...area, months: 3 });
       await call("update_dashboard", { ...area, layer: "outlook", tab: "outlook" });
@@ -94,6 +120,7 @@ export async function offlineAgent({ grounding, mode, question, focus, ctx, send
       await call("get_area_overview", area);
       if (region || year) await call("update_dashboard", { ...area, ...(year ? { year } : {}) });
       text = overview(g);
+    }
     }
   }
 
@@ -257,3 +284,60 @@ ${recent.length ? `\nRecent anomalies: ${recent.map((m) => `${ym(m)} (${signed(m
 - Coordinate controlled-burn timing with agricultural extension before the peak.
 - Re-issue this brief if live activity runs well above normal.`;
 }
+
+function rankCountries(r: any) {
+  if (r.error) return `_${r.error}_`;
+  const label = r.ranked_by === "trend" ? "Fastest-changing fire activity (significant trends)" : r.ranked_by === "intensity" ? "Most intense fires (FRP per fire-day)" : r.ranked_by === "night_share" ? "Most night-time burning" : "Most fire-days 2003–2024";
+  return `**${label}**
+
+${r.rows
+  .map(
+    (x: any, i: number) =>
+      `${i + 1}. **${x.country}**: ${r.ranked_by === "trend" ? `${x.trend_fire_days_per_year > 0 ? "+" : ""}${Math.round(x.trend_fire_days_per_year).toLocaleString()} fire-days/yr (p=${x.trend_p})` : r.ranked_by === "intensity" ? `${x.frp_mw_per_fire_day} MW per fire-day` : r.ranked_by === "night_share" ? `${Math.round(x.night_share * 100)}% at night` : `${x.total_fire_days.toLocaleString()} fire-days`}`,
+  )
+  .join("\n")}
+${r.note ? `\n_${r.note}_` : ""}
+
+The map now shows the top country. Pick any country in the sidebar to compare.`;
+}
+
+function countryOverview(ov: any, hs: any) {
+  const t = ov.trend;
+  return `**${ov.area} at a glance (${ov.record})**
+
+- Harmonized fire-days: **${ov.total_harmonized_fire_days.toLocaleString()}** (calibration k = ${ov.calibration_k})
+- Peak months: **${ov.peak_months.slice(0, 2).join("–")}**
+- Long-term trend: ${t.direction === "no trend" ? `no significant trend (p = ${t.p_value})` : `**${t.direction}** by ~${Math.abs(Math.round(t.sen_slope_per_year)).toLocaleString()} fire-days/yr (p = ${t.p_value})`}
+${typeof ov.season === "object" ? `- Season: starts ~**${ov.season.onset}**, peaks ~**${ov.season.peak}**${ov.season.onset_p < 0.05 ? `, onset shifting ${Math.abs(ov.season.onset_shift_days_per_year)} days/yr ${ov.season.onset_shift_days_per_year < 0 ? "earlier" : "later"}` : ""}` : ""}
+- Hot-spot cells (1°): **${hs.counts.persistent + hs.counts.intensifying}** persistent/intensifying, **${hs.counts.diminishing + hs.counts.historical}** cooling
+${ov.top_anomalies?.[0] ? `- Biggest anomaly: **${ymLabel(ov.top_anomalies[0].month)}** (+${ov.top_anomalies[0].pct}% vs 10-yr)` : ""}`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function science(r: any): string {
+  const out: string[] = [`**Fire science · ${r.area}**`, ""];
+  const e = r.enso_link;
+  if (typeof e === "object")
+    out.push(
+      `- **El Niño / La Niña:** r = ${e.r} (p = ${e.p}, ${e.seasons} seasons, ONI ${e.oni_window}). ${
+        e.p < 0.05 ? `Significant: each +1 °C of ONI shifts the fire season by ${e.pct_change_per_degC > 0 ? "+" : ""}${e.pct_change_per_degC}% (${e.verdict}). ENSO forecasts give months of early warning here.` : "No significant link; local land use and weather dominate."
+      }`,
+    );
+  const i = r.intensity;
+  if (typeof i === "object")
+    out.push(
+      `- **Intensity (${i.scope}, VIIRS):** ${i.frp_mw_per_fire_day} MW of fire radiative power per fire-day${i.frp_trend.significant ? `, trending ${i.frp_trend.senSlope > 0 ? "up" : "down"} (p = ${i.frp_trend.pValue})` : ", no significant trend"}; ${Math.round(i.night_share * 100)}% of detections at night${i.night_trend.significant ? ` (trending ${i.night_trend.senSlope > 0 ? "up" : "down"})` : ""}.`,
+    );
+  const g = r.fire_regime;
+  if (typeof g === "object") {
+    const n = g.fires_per_year.length || 1;
+    const avg = (k: string) => g.fires_per_year.reduce((s: number, y: Record<string, number>) => s + y[k], 0) / n;
+    out.push(
+      `- **Fire regime (${g.years[0]}–${g.years[1]}):** about ${Math.round(avg("count")).toLocaleString()} individual fires a year, mean ${avg("mean_km2").toFixed(1)} km², lasting ${avg("mean_days").toFixed(1)} days. ${g.burned_km2.toLocaleString()} km² burned at least once and ${Math.round(g.reburned_share * 100)}% of that burned again; the typical return time is ${g.median_return_years ?? "—"} year(s), the signature of short shifting-cultivation cycles.`,
+    );
+  }
+  out.push("", "_Open the **Science** tab for the charts._");
+  return out.join("\n");
+}
+
+const SCIENCE_RE = /el ni|la ni|enso|climate|pacific|frp|radiative|intensity|night|re-?burn|return interval|fire size|individual fire|regime|science/;

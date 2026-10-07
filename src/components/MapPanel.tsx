@@ -34,6 +34,8 @@ interface Props {
   live: LiveFile | null;
   outlookTarget: { year: number; month: number };
   outlookScale: number;
+  /** Incremented by the sidebar's "Draw your own area" button. */
+  drawSignal?: number;
 }
 
 const LAYERS: { id: MapLayer; label: string }[] = [
@@ -87,6 +89,9 @@ const toBounds = (b: BBox): L.LatLngBoundsExpression => [
 export function MapPanel(p: Props) {
   const { grid, points, bbox, view, year, month } = p;
   const [drawing, setDrawing] = useState(false);
+  useEffect(() => {
+    if (p.drawSignal) setDrawing(true);
+  }, [p.drawSignal]);
   const [hovered, setHovered] = useState<number | null>(null);
   const [embers, setEmbers] = useState<EmberSource[]>([]);
   const [basemap, setBasemap] = useState<Basemap>("black");

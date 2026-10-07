@@ -19,9 +19,9 @@ export interface Grounding {
   text: string;
 }
 
-export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string, opts: { table?: boolean } = {}): Grounding {
-  const analysis = analyzeAoi(grid, bbox);
-  const { lastYear, lastMonth, source, firstYear, viirsStartYear } = grid.meta;
+export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string, opts: { table?: boolean; analysis?: AoiAnalysis; meta?: GridFile["meta"]; scale?: string } = {}): Grounding {
+  const analysis = opts.analysis ?? analyzeAoi(grid, bbox);
+  const { lastYear, lastMonth, source, firstYear, viirsStartYear } = opts.meta ?? grid.meta;
 
   // Outlook = the next two calendar months from today, judged against the record's climatology.
   const now = new Date();
@@ -31,7 +31,7 @@ export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string, o
   });
 
   // Recurring hot cells for the outlook months over the last 5 VIIRS years.
-  const cells = cellsInBBox(grid, bbox);
+  const cells = opts.analysis ? new Set<number>() : cellsInBBox(grid, bbox);
   const outlookSet = new Set(outlookMonths.map((o) => o.month));
   const perCell = new Map<number, number>();
   const r = grid.records;
@@ -52,7 +52,7 @@ export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string, o
 
   const text = `<fire_data>
 DATA SOURCE: ${source === "sample" ? "SYNTHETIC DEMO DATA (simulated MODIS+VIIRS record; seasonal patterns realistic, yearly values and events invented). Say so if asked about real-world events." : "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m standard archive, static industrial sources and offshore detections removed."}
-AREA OF INTEREST: ${regionName} — bbox ${formatBBox(bbox)} (${a.cellCount} grid cells of ${grid.meta.cellSize}°)
+AREA OF INTEREST: ${regionName} — ${opts.scale ?? `bbox ${formatBBox(bbox)} (${a.cellCount} grid cells of ${grid.meta.cellSize}°)`}
 RECORD: ${firstYear}-01 to ${lastYear}-${String(lastMonth).padStart(2, "0")}. VIIRS available from ${viirsStartYear}.
 UNITS: "harmonized" = fire-days in VIIRS-equivalent units (unique 0.01° cell × day with a nominal/high-confidence detection; MODIS era scaled by k).
 HARMONIZATION: k = ${a.k} (${a.kSource === "aoi" ? "calibrated on this AOI" : "domain-wide factor; AOI too sparse"}) over overlap ${a.overlapYears[0]}-${a.overlapYears[1]}.

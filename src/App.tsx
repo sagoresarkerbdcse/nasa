@@ -4,11 +4,16 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { AnalystPanel, type ExportState, type Health } from "./components/AnalystPanel";
 import { BootScreen } from "./components/BootScreen";
 import { CalendarPanel } from "./components/CalendarPanel";
+import { ScienceTab } from "./components/ScienceTab";
+import { ensoRanking, type OniFile } from "./lib/science";
 import { Header } from "./components/Header";
 import { KpiStrip } from "./components/KpiStrip";
 import { MapPanel } from "./components/MapPanel";
+import { ScopeSidebar, type Scope } from "./components/ScopeSidebar";
 import { Tour, type TourControls, type TourFacts } from "./components/Tour";
+import { WorldMapPanel } from "./components/WorldMapPanel";
 import { hindcast, hotspotsInBBox, outlook as runOutlook, seasonTiming } from "./lib/analytics";
+import { WORLD_BBOX, analyzeCountry, grid1HotspotsIn, pseudoMeta, summarizeCountries, type CountriesFile, type CountrySummary, type Grid1File } from "./lib/global";
 import { analyzeAoi } from "./lib/harmonize";
 import { MONTHS_LONG, REGIONS, formatBBox } from "./lib/regions";
 import type { BBox, GridFile, InsightTab, LiveFile, MapLayer, MonthStat, PointsFile, SensorView } from "./lib/types";
@@ -34,8 +39,24 @@ function DashboardApp() {
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [booted, setBooted] = useState(false);
+  const [global, setGlobal] = useState<GlobalData | null>(null);
+  const [globalStatus, setGlobalStatus] = useState<"loading" | "ready" | "missing">("loading");
+  const [oni, setOni] = useState<OniFile | null>(null);
 
   useEffect(() => {
+    fetch("/data/oni.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setOni(d))
+      .catch(() => {});
+    Promise.all([fetch("/data/global/countries.json"), fetch("/data/global/grid1.json")])
+      .then(async ([a, b]) => {
+        if (!a.ok || !b.ok) throw new Error("missing");
+        const cf = (await a.json()) as CountriesFile;
+        const g1 = (await b.json()) as Grid1File;
+        setGlobal({ cf, g1, summaries: summarizeCountries(cf) });
+        setGlobalStatus("ready");
+      })
+      .catch(() => setGlobalStatus("missing"));
     fetch("/data/grid.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`grid.json: HTTP ${r.status}`))))
       .then(setGrid)
@@ -64,10 +85,16 @@ function DashboardApp() {
 
   return (
     <div className="space-bg min-h-full lg:h-full">
-      {grid && <Dashboard grid={grid} points={points} health={health} live={live} />}
+      {grid && <Dashboard grid={grid} points={points} health={health} live={live} global={global} globalStatus={globalStatus} oni={oni} />}
       <AnimatePresence>{!booted && <BootScreen key="boot" ready={Boolean(grid)} error={error} onDone={done} />}</AnimatePresence>
     </div>
   );
+}
+
+interface GlobalData {
+  cf: CountriesFile;
+  g1: Grid1File;
+  summaries: CountrySummary[];
 }
 
 const enter = (i: number) => ({
@@ -76,7 +103,7 @@ const enter = (i: number) => ({
   transition: { delay: 0.15 + i * 0.1, duration: 0.7, ease: [0.22, 1, 0.36, 1] as const },
 });
 
-const TAB_LAYER: Record<InsightTab, MapLayer> = { calendar: "activity", trends: "activity", hotspots: "hotspots", outlook: "outlook", live: "live" };
+const TAB_LAYER: Record<InsightTab, MapLayer> = { calendar: "activity", trends: "activity", hotspots: "hotspots", outlook: "outlook", live: "live", science: "anomaly" };
 
 /** Initial state from the URL hash, e.g. #r=cht&y=2023&m=4&l=anomaly&t=calendar */
 function readHash() {
@@ -94,11 +121,33 @@ function readHash() {
     g: h.get("3d") === "1",
     h: h.get("h") !== "0",
     present: h.has("present"),
+    scope: h.get("s") === "global" ? ("global" as const) : h.get("c") ? ("country" as const) : ("bd" as const),
+    country: h.get("c") ?? null,
   };
 }
 
-function Dashboard({ grid, points, health, live }: { grid: GridFile; points: PointsFile | null; health: Health | null; live: { data: LiveFile; origin: string } | null }) {
+function Dashboard({
+  grid,
+  points,
+  health,
+  live,
+  global,
+  globalStatus,
+  oni,
+}: {
+  grid: GridFile;
+  points: PointsFile | null;
+  health: Health | null;
+  live: { data: LiveFile; origin: string } | null;
+  global: GlobalData | null;
+  globalStatus: "loading" | "ready" | "missing";
+  oni: OniFile | null;
+}) {
   const init = useRef(readHash()).current;
+  const [scopeKind, setScopeKind] = useState<"bd" | "global" | "country">(init.scope);
+  const [country, setCountry] = useState<string | null>(init.country);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [drawSignal, setDrawSignal] = useState(0);
   const [regionId, setRegionId] = useState(init.b ? "custom" : init.r && REGIONS.some((r) => r.id === init.r) ? init.r : "domain");
   const [customBBox, setCustomBBox] = useState<BBox | null>(init.b ?? null);
   const [view, setView] = useState<SensorView>(init.v && ["harmonized", "modis", "viirs"].includes(init.v) ? init.v : "harmonized");
@@ -123,10 +172,16 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
 
   // The analyst can drive the dashboard through `update_dashboard`.
   const onAction = useCallback((a: Record<string, unknown>) => {
-    if (typeof a.regionId === "string") {
+    if (typeof a.country === "string") {
+      setScopeKind(a.country === "World" ? "global" : "country");
+      setCountry(a.country === "World" ? null : a.country);
+      setSelected(null);
+    } else if (typeof a.regionId === "string") {
+      setScopeKind("bd");
       setRegionId(a.regionId);
       setSelected(null);
     } else if (Array.isArray(a.bbox) && a.bbox.length === 4) {
+      setScopeKind("bd");
       setCustomBBox(a.bbox as BBox);
       setRegionId("custom");
     }
@@ -141,12 +196,27 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
   }, []);
   const analyst = useAnalyst(onAction);
 
+  // Global/country scope needs the global files; fall back to Bangladesh until they load.
+  const worldMode = scopeKind !== "bd" && Boolean(global);
+  const countryEntry = worldMode && scopeKind === "country" && country ? global!.cf.countries.find((c) => c.name === country) : undefined;
   const region = REGIONS.find((r) => r.id === regionId);
-  const bbox: BBox = regionId === "custom" && customBBox ? customBBox : (region ?? REGIONS[REGIONS.length - 1]).bbox;
-  const regionName = regionId === "custom" ? `Custom AOI (${formatBBox(bbox)})` : region!.name;
-  const regionShort = regionId === "custom" ? "this area" : region!.short === "Full domain" ? "Bangladesh" : region!.short;
+  const bdBBox: BBox = regionId === "custom" && customBBox ? customBBox : (region ?? REGIONS[REGIONS.length - 1]).bbox;
+  const bbox: BBox = worldMode ? (countryEntry?.bbox ?? WORLD_BBOX) : bdBBox;
+  const regionName = worldMode ? (countryEntry ? countryEntry.name : "Whole world") : regionId === "custom" ? `Custom AOI (${formatBBox(bbox)})` : region!.name;
+  const regionShort = worldMode ? (countryEntry ? countryEntry.name : "the world") : regionId === "custom" ? "this area" : region!.short === "Full domain" ? "Bangladesh" : region!.short;
   const bboxKey = bbox.join(",");
-  const analysis = useMemo(() => analyzeAoi(grid, bbox), [grid, bboxKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const analysis = useMemo(
+    () => (worldMode ? analyzeCountry(global!.cf, countryEntry?.name ?? null) : analyzeAoi(grid, bbox)),
+    [worldMode, global, countryEntry?.name, grid, bboxKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const meta = useMemo(() => (worldMode ? pseudoMeta(global!.cf, regionName) : grid.meta), [worldMode, global, regionName, grid.meta]);
+  const hotspots = useMemo(() => (worldMode ? grid1HotspotsIn(global!.g1, countryEntry?.bbox ?? null) : hotspotsInBBox(grid, bbox)), [worldMode, global, countryEntry, grid, bboxKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ENSO-sensitive countries (world view only, computed when the Science tab is opened).
+  const ensoRank = useMemo(() => {
+    if (!worldMode || countryEntry || tab !== "science" || !oni || !global) return null;
+    const top = [...global.summaries].sort((a, b) => b.total - a.total).slice(0, 80);
+    return ensoRanking(global.cf, top.map((c) => ({ name: c.name, analysis: analyzeCountry(global.cf, c.name) })), oni);
+  }, [worldMode, countryEntry, tab, oni, global]);
   const selectedStat = selected ? analysis.months.find((m) => m.year === selected.year && m.month === selected.month) : undefined;
 
   const outlookTargets = useMemo(() => {
@@ -163,7 +233,9 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
   // Keep the URL shareable.
   useEffect(() => {
     const h = new URLSearchParams();
-    if (regionId === "custom" && customBBox) h.set("b", customBBox.join(","));
+    if (scopeKind === "global") h.set("s", "global");
+    else if (scopeKind === "country" && country) h.set("c", country);
+    else if (regionId === "custom" && customBBox) h.set("b", customBBox.join(","));
     else h.set("r", regionId);
     h.set("y", String(year));
     if (month) h.set("m", String(month));
@@ -173,7 +245,7 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
     if (view3d) h.set("3d", "1");
     if (!harmonized) h.set("h", "0");
     window.history.replaceState(null, "", `#${h.toString()}`);
-  }, [regionId, customBBox, year, month, layer, tab, view, view3d, harmonized]);
+  }, [scopeKind, country, regionId, customBBox, year, month, layer, tab, view, view3d, harmonized]);
 
   useEffect(() => {
     if (!playing) return;
@@ -181,7 +253,7 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
     return () => clearInterval(id);
   }, [playing, grid.meta.firstYear, grid.meta.lastYear]);
 
-  const base = { bbox, regionName };
+  const base = { bbox, regionName, scope: worldMode ? { kind: scopeKind, country: countryEntry?.name ?? "World" } : undefined };
   const explain = useCallback(
     (m: MonthStat) => {
       setAnalystOpen(true);
@@ -200,9 +272,25 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
   };
 
   const changeRegion = (id: string) => {
+    setScopeKind("bd");
     setRegionId(id);
     setSelected(null);
   };
+  const onScope = (sc: Scope) => {
+    setSelected(null);
+    setPlaying(false);
+    if (sc.kind === "bd") {
+      setScopeKind("bd");
+      setRegionId(sc.regionId);
+    } else {
+      setScopeKind(sc.kind);
+      setCountry(sc.kind === "country" ? sc.name : null);
+      if (layer === "live") setLayer("activity");
+      if (tab === "live") setTabState("calendar");
+      setMonth(null);
+    }
+  };
+  const scope: Scope = worldMode ? (countryEntry ? { kind: "country", name: countryEntry.name } : { kind: "global" }) : { kind: "bd", regionId };
   const focusBBox = (b: BBox) => {
     setCustomBBox(b.map((v) => Math.round(v * 100) / 100) as BBox);
     setRegionId("custom");
@@ -276,12 +364,52 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
       <Header meta={grid.meta} harmonized={harmonized} onHarmonized={setHarmonized} onAbout={() => setAbout(true)} onPresent={() => setPresenting(true)} />
 
       <motion.div {...enter(0)} className="px-3 pt-3 lg:px-4">
-        <KpiStrip analysis={analysis} meta={grid.meta} harmonized={harmonized} regionName={regionName} onAnomaly={() => analysis.anomalies[0] && onSelect(analysis.anomalies[0])} />
+        <KpiStrip analysis={analysis} meta={meta} harmonized={harmonized} regionName={regionName} onAnomaly={() => analysis.anomalies[0] && onSelect(analysis.anomalies[0])} />
       </motion.div>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[minmax(0,57fr)_minmax(0,43fr)] lg:px-4">
+      <main className={`grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 lg:px-4 ${sidebarOpen ? "lg:grid-cols-[248px_minmax(0,56fr)_minmax(0,44fr)]" : "lg:grid-cols-[44px_minmax(0,57fr)_minmax(0,43fr)]"}`}>
+        <motion.div {...enter(1)} className="flex min-h-0">
+          <ScopeSidebar
+            scope={scope}
+            onScope={onScope}
+            countries={global?.summaries ?? null}
+            globalStatus={globalStatus}
+            open={sidebarOpen}
+            onToggle={() => setSidebarOpen((o) => !o)}
+            onDrawAoi={() => {
+              setScopeKind("bd");
+              setDrawSignal((n) => n + 1);
+            }}
+          />
+        </motion.div>
         <motion.div {...enter(1)} className="h-[66vh] min-h-[500px] lg:h-auto lg:min-h-0">
+          {worldMode ? (
+            <WorldMapPanel
+              g1={global!.g1}
+              countryNames={global!.cf.countries.map((c) => c.name)}
+              selected={countryEntry?.name ?? null}
+              onCountry={(n) => onScope(n ? { kind: "country", name: n } : { kind: "global" })}
+              bbox={bbox}
+              label={regionName}
+              year={Math.min(year, global!.g1.meta.lastYear)}
+              onYear={(y) => {
+                setYear(y);
+                setPlaying(false);
+              }}
+              month={month}
+              onMonth={setMonth}
+              playing={playing}
+              onPlaying={setPlaying}
+              layer={layer}
+              onLayer={setLayer}
+              view3d={view3d}
+              onView3d={setView3d}
+              outlookTarget={target ?? { year, month: 1 }}
+              outlookScale={outlookScale}
+            />
+          ) : (
           <MapPanel
+            drawSignal={drawSignal}
             grid={grid}
             points={points}
             bbox={bbox}
@@ -308,13 +436,14 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
             outlookTarget={target ?? { year, month: 1 }}
             outlookScale={outlookScale}
           />
+          )}
         </motion.div>
 
         <div className="flex min-h-0 flex-col gap-3">
           <motion.div {...enter(2)} layout className={`min-h-[440px] ${analystOpen ? "lg:min-h-0 lg:flex-[1.15]" : "lg:min-h-0 lg:flex-1"}`}>
             <CalendarPanel
               analysis={analysis}
-              meta={grid.meta}
+              meta={meta}
               harmonized={harmonized}
               year={year}
               selected={selected}
@@ -322,9 +451,10 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
               regionName={regionName}
               tab={tab}
               onTab={setTab}
-              grid={grid}
+              hotspots={hotspots}
+              cellSize={worldMode ? 1 : grid.meta.cellSize}
               bbox={bbox}
-              live={live?.data ?? null}
+              live={worldMode ? null : (live?.data ?? null)}
               liveOrigin={live?.origin ?? null}
               outlook={outlook}
               outlookTarget={outlookIdx}
@@ -333,6 +463,18 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
                 setLayer("outlook");
               }}
               onFocus={focusBBox}
+              science={
+                <ScienceTab
+                  analysis={analysis}
+                  oni={oni}
+                  cf={global?.cf ?? null}
+                  intensityFor={worldMode ? (countryEntry?.name ?? null) : global?.cf.countries.some((c) => c.name === "Bangladesh") ? "Bangladesh" : undefined}
+                  grid={worldMode ? null : grid}
+                  bbox={bbox}
+                  ensoRank={ensoRank}
+                  onCountry={(n) => onScope({ kind: "country", name: n })}
+                />
+              }
             />
           </motion.div>
           <motion.div {...enter(3)} layout className={analystOpen ? "h-[520px] lg:h-auto lg:min-h-0 lg:flex-1" : "shrink-0"}>
@@ -367,7 +509,7 @@ function Dashboard({ grid, points, health, live }: { grid: GridFile; points: Poi
         <span className="ml-auto normal-case tracking-normal">Independent project for the NASA Space Apps Challenge 2026 · not affiliated with or endorsed by NASA</span>
       </footer>
 
-      <AnimatePresence>{about && <AboutModal meta={grid.meta} k={analysis.k} onClose={() => setAbout(false)} />}</AnimatePresence>
+      <AnimatePresence>{about && <AboutModal meta={meta} k={analysis.k} onClose={() => setAbout(false)} />}</AnimatePresence>
       {presenting && <Tour facts={facts} controls={controls} onClose={() => setPresenting(false)} />}
     </div>
   );

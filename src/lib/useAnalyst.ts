@@ -22,6 +22,8 @@ interface Request {
   bbox: BBox;
   regionName: string;
   focus?: { year: number; month: number };
+  /** Country or world scope (omitted for the Bangladesh high-detail record). */
+  scope?: { kind: string; country: string };
 }
 
 let nextId = 1;

@@ -127,4 +127,4 @@ export interface LiveFile {
 }
 
 export type MapLayer = "activity" | "anomaly" | "hotspots" | "outlook" | "live";
-export type InsightTab = "calendar" | "trends" | "hotspots" | "outlook" | "live";
+export type InsightTab = "calendar" | "trends" | "hotspots" | "outlook" | "live" | "science";

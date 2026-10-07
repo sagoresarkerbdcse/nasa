@@ -1,11 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, Flame, LineChart as LineIcon, Radio, Telescope, Zap } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { Atom, CalendarDays, Flame, LineChart as LineIcon, Radio, Telescope, Zap } from "lucide-react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { OutlookMonth } from "../lib/analytics";
 import { fmt, heat, powScale } from "../lib/color";
 import { MONTHS } from "../lib/regions";
 import type { AoiAnalysis, BBox, GridFile, InsightTab, LiveFile, MonthStat } from "../lib/types";
-import { HotspotsTab, LiveTab, OutlookTab, TrendsTab } from "./InsightTabs";
+import { HotspotsTab, LiveTab, OutlookTab, TrendsTab, type HotspotSummary } from "./InsightTabs";
 
 const TABS: { id: InsightTab; label: string; Icon: typeof CalendarDays }[] = [
   { id: "calendar", label: "Calendar", Icon: CalendarDays },
@@ -13,6 +13,7 @@ const TABS: { id: InsightTab; label: string; Icon: typeof CalendarDays }[] = [
   { id: "hotspots", label: "Hot spots", Icon: Flame },
   { id: "outlook", label: "Outlook", Icon: Telescope },
   { id: "live", label: "Live", Icon: Radio },
+  { id: "science", label: "Science", Icon: Atom },
 ];
 
 interface Props {
@@ -25,7 +26,8 @@ interface Props {
   regionName: string;
   tab: InsightTab;
   onTab: (t: InsightTab) => void;
-  grid: GridFile;
+  hotspots: HotspotSummary;
+  cellSize: number;
   bbox: BBox;
   live: LiveFile | null;
   liveOrigin: string | null;
@@ -33,6 +35,7 @@ interface Props {
   outlookTarget: number;
   onOutlookTarget: (i: number) => void;
   onFocus: (b: BBox) => void;
+  science: ReactNode;
 }
 
 export function CalendarPanel(p: Props) {
@@ -160,9 +163,15 @@ export function CalendarPanel(p: Props) {
           ) : (
             <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="pt-3">
               {tab === "trends" && <TrendsTab analysis={analysis} meta={meta} harmonized={harmonized} />}
-              {tab === "hotspots" && <HotspotsTab grid={p.grid} bbox={p.bbox} onFocus={p.onFocus} />}
+              {tab === "hotspots" && <HotspotsTab summary={p.hotspots} cellSize={p.cellSize} onFocus={p.onFocus} />}
               {tab === "outlook" && <OutlookTab analysis={analysis} outlook={p.outlook} target={p.outlookTarget} onTarget={p.onOutlookTarget} />}
-              {tab === "live" && <LiveTab live={p.live} origin={p.liveOrigin} analysis={analysis} bbox={p.bbox} onFocus={p.onFocus} />}
+              {tab === "science" && p.science}
+              {tab === "live" &&
+                (p.live ? (
+                  <LiveTab live={p.live} origin={p.liveOrigin} analysis={analysis} bbox={p.bbox} onFocus={p.onFocus} />
+                ) : (
+                  <p className="py-6 text-center text-[12px] leading-relaxed text-slate-400">The live 7-day FIRMS feed covers the Bangladesh study area. Choose Bangladesh in the sidebar to see live fires.</p>
+                ))}
             </motion.div>
           )}
         </AnimatePresence>

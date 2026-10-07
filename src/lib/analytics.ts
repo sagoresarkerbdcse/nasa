@@ -46,12 +46,11 @@ export function completeYears(grid: GridFile): number[] {
   return out;
 }
 
-function neighbours(grid: GridFile): number[][] {
-  const step = grid.meta.cellSize;
+function neighbours(cells: [number, number][], step: number): number[][] {
   const index = new Map<string, number>();
   const key = (lon: number, lat: number) => `${Math.round(lon / step)},${Math.round(lat / step)}`;
-  grid.cells.forEach(([lon, lat], i) => index.set(key(lon, lat), i));
-  return grid.cells.map(([lon, lat]) => {
+  cells.forEach(([lon, lat], i) => index.set(key(lon, lat), i));
+  return cells.map(([lon, lat]) => {
     const out: number[] = [];
     for (let dx = -1; dx <= 1; dx++)
       for (let dy = -1; dy <= 1; dy++) {
@@ -118,12 +117,21 @@ const ehsaCache = new WeakMap<GridFile, CellHotspot[]>();
 export function emergingHotspots(grid: GridFile): CellHotspot[] {
   const hit = ehsaCache.get(grid);
   if (hit) return hit;
-  const years = completeYears(grid);
-  const iy = years.map((y) => y - grid.meta.firstYear);
-  const M = cellYearMatrix(grid);
-  const nb = neighbours(grid);
-  const n = grid.cells.length;
-  const z: number[][] = grid.cells.map(() => []);
+  const years = completeYears(grid).map((y) => y - grid.meta.firstYear);
+  const result = ehsa(grid.cells, cellYearMatrix(grid), years, grid.meta.cellSize);
+  ehsaCache.set(grid, result);
+  return result;
+}
+
+/**
+ * Emerging hot spot analysis on any lattice: Getis-Ord Gi* per cell and year
+ * (queen contiguity, binary weights; hot = z ≥ 1.96), then Mann-Kendall on
+ * each cell's Gi* series to classify its space-time pattern.
+ */
+export function ehsa(cells: [number, number][], M: ArrayLike<number>[], iy: number[], step: number): CellHotspot[] {
+  const nb = neighbours(cells, step);
+  const n = cells.length;
+  const z: number[][] = cells.map(() => []);
 
   for (const t of iy) {
     let sum = 0;
@@ -145,7 +153,7 @@ export function emergingHotspots(grid: GridFile): CellHotspot[] {
   }
 
   const T = iy.length;
-  const result = grid.cells.map(([lon, lat], i): CellHotspot => {
+  return cells.map(([lon, lat], i): CellHotspot => {
     const zs = z[i];
     const hot = zs.map((v) => v >= 1.96);
     const hotYears = hot.filter(Boolean).length;
@@ -164,16 +172,17 @@ export function emergingHotspots(grid: GridFile): CellHotspot[] {
     const meanFireDays = iy.reduce((s, t) => s + M[i][t], 0) / T;
     return { cell: i, lon, lat, category, hotYears, lastZ: round2(zs[T - 1] ?? 0), trend, meanFireDays: round1(meanFireDays) };
   });
-  ehsaCache.set(grid, result);
-  return result;
 }
 
-export function hotspotsInBBox(grid: GridFile, bbox: BBox) {
-  const all = emergingHotspots(grid).filter((c) => c.lon >= bbox[0] && c.lon <= bbox[2] && c.lat >= bbox[1] && c.lat <= bbox[3]);
+export function summarizeHotspots(all: CellHotspot[]) {
   const counts = Object.fromEntries(Object.keys(HOTSPOT_META).map((k) => [k, 0])) as Record<HotspotCategory, number>;
   for (const c of all) counts[c.category]++;
   const ranked = all.filter((c) => c.category !== "none").sort((a, b) => b.meanFireDays - a.meanFireDays);
   return { cells: all, counts, ranked };
+}
+
+export function hotspotsInBBox(grid: GridFile, bbox: BBox) {
+  return summarizeHotspots(emergingHotspots(grid).filter((c) => c.lon >= bbox[0] && c.lon <= bbox[2] && c.lat >= bbox[1] && c.lat <= bbox[3]));
 }
 
 // ---------------------------------------------------------------------------

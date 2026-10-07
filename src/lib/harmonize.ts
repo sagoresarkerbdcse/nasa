@@ -21,7 +21,7 @@
  */
 import { RECORD_WIDTH, type AoiAnalysis, type BBox, type GridFile, type MonthStat, type SensorView, type TrendResult } from "./types";
 
-interface Acc {
+export interface Acc {
   modisRaw: number;
   viirsRaw: number;
   modisFD: number;
@@ -30,7 +30,7 @@ interface Acc {
   viirsHigh: number;
 }
 
-const emptyAcc = (): Acc => ({ modisRaw: 0, viirsRaw: 0, modisFD: 0, viirsFD: 0, modisHigh: 0, viirsHigh: 0 });
+export const emptyAcc = (): Acc => ({ modisRaw: 0, viirsRaw: 0, modisFD: 0, viirsFD: 0, modisHigh: 0, viirsHigh: 0 });
 
 export function cellsInBBox(grid: GridFile, bbox: BBox): Set<number> {
   const out = new Set<number>();
@@ -40,7 +40,15 @@ export function cellsInBBox(grid: GridFile, bbox: BBox): Set<number> {
   return out;
 }
 
-function monthIndex(grid: GridFile, year: number, month: number) {
+/** Time axis of a monthly series. */
+export interface SeriesMeta {
+  firstYear: number;
+  lastYear: number;
+  lastMonth: number;
+  viirsStartYear: number;
+}
+
+function monthIndex(grid: { meta: SeriesMeta }, year: number, month: number) {
   return (year - grid.meta.firstYear) * 12 + (month - 1);
 }
 
@@ -63,7 +71,7 @@ function aggregate(grid: GridFile, cells: Set<number> | null): Acc[] {
 }
 
 /** Overlap-period calibration factor k = ΣVIIRS fire-days / ΣMODIS fire-days. */
-function calibrate(grid: GridFile, acc: Acc[]): { k: number; fd: number } {
+function calibrate(grid: { meta: SeriesMeta }, acc: Acc[]): { k: number; fd: number } {
   let v = 0;
   let m = 0;
   for (let y = grid.meta.viirsStartYear; y <= grid.meta.lastYear; y++) {
@@ -86,19 +94,29 @@ export function domainK(grid: GridFile): number {
   return k;
 }
 
-function isMissing(grid: GridFile, year: number, month: number) {
+function isMissing(grid: { meta: SeriesMeta }, year: number, month: number) {
   return year === grid.meta.lastYear && month > grid.meta.lastMonth;
 }
 
 export function analyzeAoi(grid: GridFile, bbox: BBox): AoiAnalysis {
   const cells = cellsInBBox(grid, bbox);
-  const acc = aggregate(grid, cells);
-  const { firstYear, lastYear, viirsStartYear } = grid.meta;
+  return analyzeSeries(aggregate(grid, cells), grid.meta, { bbox, cellCount: cells.size, fallbackK: () => domainK(grid) });
+}
 
-  // Small AOIs have too few overlap fire-days for a stable ratio: fall back to the domain factor.
+/**
+ * Full analysis of any monthly MODIS/VIIRS series (an AOI in the gridded
+ * record, a country, or the world): harmonization, anomalies, climatology,
+ * peak months and trend.
+ */
+export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; cellCount: number; fallbackK: () => number }): AoiAnalysis {
+  const grid = { meta };
+  const bbox = opts.bbox;
+  const { firstYear, lastYear, viirsStartYear } = meta;
+
+  // Small areas have too few overlap fire-days for a stable ratio: fall back to the wider factor.
   const local = calibrate(grid, acc);
   const useLocal = local.fd >= 40;
-  const k = useLocal ? local.k : domainK(grid);
+  const k = useLocal ? local.k : opts.fallbackK();
 
   const months: MonthStat[] = [];
   for (let y = firstYear; y <= lastYear; y++) {
@@ -191,7 +209,7 @@ export function analyzeAoi(grid: GridFile, bbox: BBox): AoiAnalysis {
 
   return {
     bbox,
-    cellCount: cells.size,
+    cellCount: opts.cellCount,
     k: round2(k),
     kSource: useLocal ? "aoi" : "domain",
     overlapYears: [viirsStartYear, lastYear],

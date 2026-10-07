@@ -6,14 +6,17 @@
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import { HOTSPOT_META, hindcast, hotspotsInBBox, liveSummary, outlook, seasonTiming } from "../src/lib/analytics";
+import { ensoLink, fireRegime, intensity, type OniFile } from "../src/lib/science";
+import { analyzeCountry, grid1HotspotsIn, normName, type CountriesFile, type CountrySummary, type Grid1File } from "../src/lib/global";
 import { analyzeAoi } from "../src/lib/harmonize";
 import { MONTHS, REGIONS, formatBBox } from "../src/lib/regions";
 import type { BBox, GridFile, LiveFile } from "../src/lib/types";
 
 export type Layer = "activity" | "anomaly" | "hotspots" | "outlook" | "live";
-export type Tab = "calendar" | "trends" | "hotspots" | "outlook" | "live";
+export type Tab = "calendar" | "trends" | "hotspots" | "outlook" | "live" | "science";
 
 export interface DashboardAction {
+  country?: string;
   regionId?: string;
   bbox?: BBox;
   year?: number;
@@ -25,13 +28,19 @@ export interface DashboardAction {
 
 export interface ToolContext {
   grid: GridFile;
+  global: { cf: CountriesFile; g1: Grid1File; summaries: CountrySummary[] } | null;
   getLive: () => Promise<LiveFile | null>;
+  oni: OniFile | null;
   /** Area the user currently has selected, used when the model omits one. */
-  current: { bbox: BBox; name: string };
+  current: { bbox: BBox; name: string; country?: string };
   emit: (action: DashboardAction) => void;
 }
 
 const AREA_PROPS = {
+  country: {
+    type: "string",
+    description: "Any country name (e.g. Brazil, India, Indonesia) or 'World' for the whole planet. Uses the global record: harmonized per country, 1° map cells. Omit for Bangladesh detail.",
+  },
   region: { type: "string", description: "Preset area: sylhet, sundarbans, cht (Chittagong Hill Tracts) or domain (whole study area). Omit to use the user's current area." },
   bbox: { type: "array", items: { type: "number" }, description: "Custom [minLon, minLat, maxLon, maxLat] within 88.0-92.75E, 20.5-26.75N. Overrides region." },
 } as const;
@@ -86,14 +95,29 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: { type: "object", properties: { ...AREA_PROPS, months: { type: "integer", minimum: 1, maximum: 6 } } },
   },
   {
+    name: "get_fire_science",
+    description:
+      "Scientific diagnostics for an area: (1) El Niño/La Niña link — Pearson r between pre-season NOAA ONI and the detrended fire-season anomaly, with p-value and % change per +1 °C; (2) fire intensity — VIIRS FRP per fire-day and night-time share with Mann-Kendall trends; (3) fire regime (Bangladesh detail only) — individual fires per year, size, duration, burned footprint, re-burn share and burn return interval.",
+    input_schema: { type: "object", properties: { ...AREA_PROPS } },
+  },
+  {
     name: "get_live_fires",
     description: "Near-real-time NASA FIRMS detections from the last 7 days in an area (VIIRS S-NPP, NOAA-20, NOAA-21, MODIS), compared with normal activity for this time of year.",
     input_schema: { type: "object", properties: { ...AREA_PROPS } },
   },
   {
+    name: "rank_countries",
+    description: "Global leaderboard of countries from the harmonized 2003-2024 record: by total fire-days, by long-term trend (fastest increasing or decreasing, Mann-Kendall significant only), by mean fire intensity (FRP per fire-day) or by share of night-time fire detections.",
+    input_schema: {
+      type: "object",
+      properties: { by: { type: "string", enum: ["fire_days", "trend", "intensity", "night_share"] }, order: { type: "string", enum: ["highest", "lowest"] }, limit: { type: "integer", minimum: 1, maximum: 20 } },
+      required: ["by"],
+    },
+  },
+  {
     name: "update_dashboard",
     description:
-      "Change what the user sees: fly the map to an area, pick a year/month, switch the map layer (activity, anomaly, hotspots, outlook, live), open a panel tab (calendar, trends, hotspots, outlook, live) or toggle the 3D globe. Use it whenever your answer is about a place or time the user should look at.",
+      "Change what the user sees: fly the map to a country (country) or a Bangladesh area (region/bbox), pick a year/month, switch the map layer (activity, anomaly, hotspots, outlook, live), open a panel tab (calendar, trends, hotspots, outlook, live) or toggle the 3D globe. Use it whenever your answer is about a place or time the user should look at.",
     input_schema: {
       type: "object",
       properties: {
@@ -101,7 +125,7 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
         year: { type: "integer" },
         month: { type: ["integer", "null"], minimum: 1, maximum: 12 },
         layer: { type: "string", enum: ["activity", "anomaly", "hotspots", "outlook", "live"] },
-        tab: { type: "string", enum: ["calendar", "trends", "hotspots", "outlook", "live"] },
+        tab: { type: "string", enum: ["calendar", "trends", "hotspots", "outlook", "live", "science"] },
         view3d: { type: "boolean" },
       },
     },
@@ -110,7 +134,23 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-export function resolveArea(input: Record<string, unknown>, ctx: ToolContext): { bbox: BBox; name: string; regionId?: string } {
+export function findCountry(ctx: ToolContext, q: string): string | null {
+  if (!ctx.global) return null;
+  const n = normName(q);
+  if (["world", "global", "earth", "planet", "whole world"].includes(n)) return "World";
+  const names = ctx.global.cf.countries.map((c) => c.name);
+  return names.find((x) => normName(x) === n) ?? names.find((x) => normName(x).startsWith(n)) ?? names.find((x) => normName(x).includes(n)) ?? null;
+}
+
+export function resolveArea(input: Record<string, unknown>, ctx: ToolContext): { bbox: BBox; name: string; regionId?: string; country?: string } {
+  if (typeof input.country === "string" && ctx.global) {
+    const c = findCountry(ctx, input.country);
+    if (c === "World") return { bbox: [-180, -58, 180, 78], name: "Whole world", country: "World" };
+    if (c) {
+      const e = ctx.global.cf.countries.find((x) => x.name === c)!;
+      return { bbox: e.bbox ?? [-180, -58, 180, 78], name: c, country: c };
+    }
+  }
   const b = input.bbox;
   if (Array.isArray(b) && b.length === 4 && b.every(isNum) && b[0] < b[2] && b[1] < b[3]) {
     const bb = b.map((v, i) => Math.min(Math.max(v, [88, 20.5, 88, 20.5][i]), [92.75, 26.75, 92.75, 26.75][i])) as BBox;
@@ -121,6 +161,8 @@ export function resolveArea(input: Record<string, unknown>, ctx: ToolContext): {
     const r = REGIONS.find((x) => x.id === q || x.name.toLowerCase().includes(q) || x.short.toLowerCase() === q || (q.includes("chittagong") && x.id === "cht") || (/(whole|all|bangladesh|domain)/.test(q) && x.id === "domain"));
     if (r) return { bbox: r.bbox, name: r.name, regionId: r.id };
   }
+  if (ctx.current.country && input.region === undefined && input.bbox === undefined)
+    return { bbox: ctx.current.bbox, name: ctx.current.name, country: ctx.current.country };
   return ctx.current;
 }
 
@@ -129,17 +171,20 @@ const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}`;
 export async function runTool(name: string, input: Record<string, unknown>, ctx: ToolContext): Promise<unknown> {
   const { grid } = ctx;
   const area = resolveArea(input, ctx);
-  const a = analyzeAoi(grid, area.bbox);
+  const isCountry = Boolean(area.country && ctx.global);
+  const a = isCountry ? analyzeCountry(ctx.global!.cf, area.country === "World" ? null : area.country!) : analyzeAoi(grid, area.bbox);
+  const hotspotsFor = () => (isCountry ? grid1HotspotsIn(ctx.global!.g1, area.country === "World" ? null : area.bbox) : hotspotsInBBox(grid, area.bbox));
   const yearOk = (y: unknown) => isNum(y) && y >= grid.meta.firstYear && y <= grid.meta.lastYear;
 
   switch (name) {
     case "get_area_overview": {
       const s = seasonTiming(a);
-      const h = hotspotsInBBox(grid, area.bbox);
+      const h = hotspotsFor();
       return {
         area: area.name,
-        record: `${grid.meta.firstYear}-${grid.meta.lastYear}`,
-        data_source: grid.meta.source === "sample" ? "SYNTHETIC demo data" : "NASA FIRMS MODIS C6.1 + VIIRS S-NPP archive",
+        scale: isCountry ? "country-level harmonized series; hot spots on 1° cells" : "Bangladesh high-detail record (0.25° cells, 0.01° fire-days)",
+        record: `${a.months[0].year}-${a.months[a.months.length - 1].year}`,
+        data_source: grid.meta.source === "sample" && !isCountry ? "SYNTHETIC demo data" : "NASA FIRMS MODIS C6.1 + VIIRS S-NPP archive",
         total_harmonized_fire_days: a.totals.harmonized,
         naive_mixed_sensor_detections: a.totals.naive,
         calibration_k: a.k,
@@ -189,10 +234,10 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
       };
     }
     case "get_hotspot_trends": {
-      const h = hotspotsInBBox(grid, area.bbox);
+      const h = hotspotsFor();
       return {
         area: area.name,
-        method: "Getis-Ord Gi* (queen contiguity, 0.25° cells, hot if z ≥ 1.96) per year + Mann-Kendall trend on Gi* z",
+        method: `Getis-Ord Gi* (queen contiguity, ${isCountry ? "1°" : "0.25°"} cells, hot if z ≥ 1.96) per year + Mann-Kendall trend on Gi* z`,
         counts: h.counts,
         category_meaning: Object.fromEntries(Object.entries(HOTSPOT_META).map(([k, v]) => [k, v.blurb])),
         top_cells: h.ranked.slice(0, 8).map((c) => ({ lat: c.lat, lon: c.lon, category: c.category, hot_years: c.hotYears, mean_fire_days_per_year: c.meanFireDays })),
@@ -226,7 +271,34 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
         hindcast: { test_years: h.years, skill_vs_climatology: h.skill, mae_model: h.maeModel, mae_climatology: h.maeClim, range_coverage: h.coverage },
       };
     }
+    case "get_fire_science": {
+      const enso = ctx.oni ? ensoLink(a, ctx.oni) : null;
+      const intenName = isCountry ? (area.country === "World" ? null : area.country!) : "Bangladesh";
+      const inten = ctx.global && (intenName === null || ctx.global.cf.countries.some((c) => c.name === intenName)) ? intensity(ctx.global.cf, intenName) : null;
+      const regime = isCountry ? null : fireRegime(grid, area.bbox);
+      return {
+        area: area.name,
+        enso_link: enso
+          ? { r: enso.r, p: enso.p, seasons: enso.n, oni_window: enso.window, pct_change_per_degC: enso.pctPerDegree, verdict: enso.verdict }
+          : "not available (ONI not loaded or too few seasons)",
+        intensity: inten
+          ? { scope: intenName ?? "World", frp_mw_per_fire_day: inten.meanFrp, frp_trend: inten.frpTrend, night_share: inten.meanNight, night_trend: inten.nightTrend }
+          : "not available",
+        fire_regime: regime
+          ? {
+              years: regime.years,
+              burned_km2: regime.burnedKm2,
+              reburned_share: regime.reburnedShare,
+              median_return_years: regime.medianInterval,
+              fires_per_year: regime.events.map((e) => ({ year: e.year, count: e.count, mean_km2: e.meanKm2, max_km2: e.maxKm2, mean_days: e.meanDays })),
+              count_trend: regime.countTrend,
+              size_trend: regime.sizeTrend,
+            }
+          : "only computed for the Bangladesh high-detail record",
+      };
+    }
     case "get_live_fires": {
+      if (isCountry) return { note: "The live 7-day feed covers the Bangladesh study area only. Use the Bangladesh scope for live fires." };
       const live = await ctx.getLive();
       if (!live) return { error: "Live feed unavailable right now." };
       const s = liveSummary(live, a, area.bbox);
@@ -244,9 +316,28 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
         sources: live.sources.map((x) => `${x.label}: ${x.ok ? x.count : "unavailable"}`),
       };
     }
+    case "rank_countries": {
+      if (!ctx.global) return { error: "Global dataset not built yet." };
+      const limit = isNum(input.limit) ? Math.min(20, Math.max(1, input.limit)) : 10;
+      const asc = input.order === "lowest";
+      let list = [...ctx.global.summaries];
+      const key = (c: CountrySummary) =>
+        input.by === "trend" ? c.trend.senSlope : input.by === "intensity" ? c.frpPerFireDay : input.by === "night_share" ? c.nightShare : c.total;
+      if (input.by === "trend") list = list.filter((c) => c.trend.significant);
+      if (input.by === "intensity" || input.by === "night_share") list = list.filter((c) => c.total > 20000);
+      list.sort((x, y) => (asc ? key(x) - key(y) : key(y) - key(x)));
+      return {
+        ranked_by: input.by,
+        note: input.by === "trend" ? "Only countries with a statistically significant Mann-Kendall trend (p<0.05)." : input.by === "intensity" || input.by === "night_share" ? "Countries with >20,000 fire-days only." : undefined,
+        rows: list.slice(0, limit).map((c) => ({ country: c.name, total_fire_days: c.total, trend_fire_days_per_year: c.trend.senSlope, trend_p: c.trend.pValue, frp_mw_per_fire_day: c.frpPerFireDay, night_share: c.nightShare })),
+      };
+    }
     case "update_dashboard": {
       const action: { -readonly [K in keyof DashboardAction]: DashboardAction[K] } = {};
-      if (input.region !== undefined || input.bbox !== undefined) {
+      if (typeof input.country === "string" && ctx.global) {
+        const c = findCountry(ctx, input.country);
+        if (c) action.country = c;
+      } else if (input.region !== undefined || input.bbox !== undefined) {
         const r = resolveArea(input, ctx);
         if (r.regionId) action.regionId = r.regionId;
         else action.bbox = r.bbox;
@@ -254,7 +345,7 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
       if (yearOk(input.year)) action.year = input.year as number;
       if (input.month === null || (isNum(input.month) && input.month >= 1 && input.month <= 12)) action.month = input.month as number | null;
       if (typeof input.layer === "string" && ["activity", "anomaly", "hotspots", "outlook", "live"].includes(input.layer)) action.layer = input.layer as Layer;
-      if (typeof input.tab === "string" && ["calendar", "trends", "hotspots", "outlook", "live"].includes(input.tab)) action.tab = input.tab as Tab;
+      if (typeof input.tab === "string" && ["calendar", "trends", "hotspots", "outlook", "live", "science"].includes(input.tab)) action.tab = input.tab as Tab;
       if (typeof input.view3d === "boolean") action.view3d = input.view3d;
       ctx.emit(action);
       return { ok: true, applied: action };

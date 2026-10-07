@@ -10,12 +10,14 @@
  * answers from the harmonized record and `update_dashboard` to move the
  * user's map. Without credentials an offline analyst uses the same tools.
  */
+import type { OniFile } from "../src/lib/science";
 import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fetchLive } from "../pipeline/live";
 import type { BBox, GridFile, LiveFile } from "../src/lib/types";
+import { analyzeCountry, pseudoMeta, summarizeCountries, type CountriesFile, type Grid1File } from "../src/lib/global";
 import { buildGrounding, type Focus } from "./context";
 import { offlineAgent } from "./offline";
 import { BudgetExceeded, OPENROUTER, budgetStatus, runOpenRouter, withinBudget } from "./openrouter";
@@ -30,6 +32,16 @@ const root = process.cwd();
 const dataDir = [join(root, "public/data"), join(root, "dist/data")].find((d) => existsSync(join(d, "grid.json")));
 if (!dataDir) throw new Error("grid.json not found. Run `npm run data:ingest` or `npm run data:sample` first.");
 const grid: GridFile = JSON.parse(readFileSync(join(dataDir, "grid.json"), "utf8"));
+// Global per-country record (optional; built by the "Build global FIRMS dataset" workflow).
+const global = (() => {
+  const c = join(dataDir, "global/countries.json");
+  const g = join(dataDir, "global/grid1.json");
+  if (!existsSync(c) || !existsSync(g)) return null;
+  const cf = JSON.parse(readFileSync(c, "utf8")) as CountriesFile;
+  return { cf, g1: JSON.parse(readFileSync(g, "utf8")) as Grid1File, summaries: summarizeCountries(cf) };
+})();
+
+const oni: OniFile | null = existsSync(join(dataDir, "oni.json")) ? JSON.parse(readFileSync(join(dataDir, "oni.json"), "utf8")) : null;
 
 // Provider: OpenRouter (low-cost, budget-capped) > Anthropic > offline analyst.
 const PROVIDER: "openrouter" | "anthropic" | "offline" = OPENROUTER.key
@@ -72,7 +84,7 @@ async function getLive() {
 // ---------------------------------------------------------------------------
 // Prompting
 // ---------------------------------------------------------------------------
-const SYSTEM = `You are FireCal Analyst, the AI analyst inside FireCal AI. The dashboard harmonizes NASA MODIS (1 km, 2003→) and VIIRS (375 m, 2012→) active-fire detections into one consistent burning-activity record for Bangladesh and its border fire belts (Tripura, Mizoram, Meghalaya, West Bengal, Rakhine).
+const SYSTEM = `You are FireCal Analyst, the AI analyst inside FireCal AI. The dashboard harmonizes NASA MODIS (1 km, 2003→) and VIIRS (375 m, 2012→) active-fire detections into one consistent burning-activity record at two scales: a high-detail record for Bangladesh and its border fire belts (0.25° cells, live 7-day feed), and a global record for every country and the world (harmonized per country, 1° map cells, 2003-2024).
 
 Your users are fire managers, early-warning officers, disaster responders, forest officials and scientists. Many read English as a second language. Write in plain, short sentences.
 
@@ -103,6 +115,7 @@ interface AnalystRequest {
   regionName?: string;
   focus?: Focus;
   history?: { role: "user" | "assistant"; content: string }[];
+  scope?: { kind: string; country: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +132,7 @@ app.get("/api/health", (_req, res) => {
     budget: PROVIDER === "openrouter" ? budgetStatus() : null,
     llmModes: [...LLM_MODES],
     dataSource: grid.meta.source,
+    global: global ? { countries: global.cf.countries.length, record: `${global.cf.meta.firstYear}-${global.cf.meta.lastYear}` } : null,
     record: `${grid.meta.firstYear}-${grid.meta.lastYear}`,
   });
 });
@@ -141,7 +155,12 @@ app.post("/api/analyst", async (req, res) => {
   }
   const regionName = String(body.regionName ?? "Custom area").slice(0, 80);
   const question = String(body.question ?? "").slice(0, 2000);
-  const grounding = buildGrounding(grid, body.bbox, regionName);
+  // Country / world scope uses the global record; otherwise the Bangladesh high-detail grid.
+  const scopeCountry = global && body.scope?.country ? (body.scope.country === "World" ? "World" : global.cf.countries.find((c) => c.name === body.scope!.country)?.name) : undefined;
+  const groundOpts = scopeCountry
+    ? { analysis: analyzeCountry(global!.cf, scopeCountry === "World" ? null : scopeCountry), meta: pseudoMeta(global!.cf, regionName), scale: "country-level harmonized series (global FIRMS all-countries archive); map cells are 1°" }
+    : {};
+  const grounding = buildGrounding(grid, body.bbox, regionName, groundOpts);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -167,8 +186,10 @@ app.post("/api/analyst", async (req, res) => {
 
   const ctx: ToolContext = {
     grid,
+    global,
     getLive: async () => (await getLive())?.data ?? null,
-    current: { bbox: body.bbox, name: regionName },
+    oni,
+    current: { bbox: body.bbox, name: regionName, ...(scopeCountry ? { country: scopeCountry } : {}) },
     emit: (action: DashboardAction) => send({ type: "action", action }),
   };
 
@@ -193,7 +214,7 @@ app.post("/api/analyst", async (req, res) => {
       res.end();
       return;
     }
-    const lean = buildGrounding(grid, body.bbox, regionName, { table: false });
+    const lean = buildGrounding(grid, body.bbox, regionName, { ...groundOpts, table: false });
     const focusLineOR = body.focus ? `\nFOCUS MONTH: ${body.focus.year}-${String(body.focus.month).padStart(2, "0")}` : "";
     const taskOR = body.mode === "chat" ? question || "Give me an overview of this area." : body.mode === "insight" ? "Explain the focus month." : "Generate the early-warning brief.";
     try {

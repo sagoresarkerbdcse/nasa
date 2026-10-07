@@ -6,9 +6,9 @@ import {
   HOTSPOT_FAMILY,
   HOTSPOT_META,
   hindcast,
-  hotspotsInBBox,
   liveSummary,
   seasonTiming,
+  summarizeHotspots,
   type HotspotCategory,
   type OutlookMonth,
 } from "../lib/analytics";
@@ -138,15 +138,16 @@ export function TrendsTab({ analysis, meta, harmonized }: { analysis: AoiAnalysi
 }
 
 // ---------------------------------------------------------------------------
-export function HotspotsTab({ grid, bbox, onFocus }: { grid: GridFile; bbox: BBox; onFocus: (b: BBox) => void }) {
-  const h = useMemo(() => hotspotsInBBox(grid, bbox), [grid, bbox]);
+export type HotspotSummary = ReturnType<typeof summarizeHotspots>;
+
+export function HotspotsTab({ summary: h, cellSize, onFocus }: { summary: HotspotSummary; cellSize: number; onFocus: (b: BBox) => void }) {
   const order: HotspotCategory[] = ["intensifying", "new", "consecutive", "persistent", "diminishing", "historical", "sporadic"];
   const max = Math.max(1, ...order.map((k) => h.counts[k]));
   const total = order.reduce((s, k) => s + h.counts[k], 0);
   return (
     <div className="space-y-4 pb-2">
       <p className="text-[12px] leading-relaxed text-slate-400">
-        For every year, each 0.25° cell gets a <strong className="text-slate-200">Getis-Ord Gi*</strong> score: is it, together with its neighbours, burning significantly more than the area as a whole? A <strong className="text-slate-200">Mann-Kendall</strong> test on
+        For every year, each {cellSize}° cell gets a <strong className="text-slate-200">Getis-Ord Gi*</strong> score: is it, together with its neighbours, burning significantly more than the area as a whole? A <strong className="text-slate-200">Mann-Kendall</strong> test on
         those scores then says whether each hot spot is growing or fading.
       </p>
       <div className="space-y-1.5" role="list" aria-label="Hot-spot cells by pattern">
@@ -176,7 +177,7 @@ export function HotspotsTab({ grid, bbox, onFocus }: { grid: GridFile; bbox: BBo
           {h.ranked.slice(0, 8).map((c) => (
             <button
               key={c.cell}
-              onClick={() => onFocus([c.lon - 0.375, c.lat - 0.375, c.lon + 0.375, c.lat + 0.375])}
+              onClick={() => onFocus([c.lon - cellSize * 1.5, c.lat - cellSize * 1.5, c.lon + cellSize * 1.5, c.lat + cellSize * 1.5])}
               className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
             >
               <span className="flex items-center gap-2 font-mono text-[11px] text-slate-200">
