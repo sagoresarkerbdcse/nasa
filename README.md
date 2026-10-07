@@ -27,23 +27,32 @@ The browser, the API server and the tests all use the same harmonization engine 
 
 ## Features
 
-- **Interactive map**: NASA GIBS imagery, Harmonized / MODIS / VIIRS switcher, preset areas or **draw your own AOI**, a time playbar across 2001–2026 with a month filter, and ember particles over the hottest areas.
-- **Fire calendar matrix**: years × months heatmap, glowing anomaly cells, hover popovers (hotspots, fire-days, HCI, MODIS:VIIRS ratio, % vs 10-yr average), and an annual chart that shows the naive jump next to the harmonized series.
+- **Two scales.** The sidebar switches between the **whole world** (236 countries, harmonized per country and on a 1° grid), any **country**, and the **Bangladesh high-detail** record (0.25° map, 0.01° fire-days, preset regions or **draw your own area**).
+- **Interactive maps**: NASA GIBS imagery (Black Marble, Blue Marble, date-matched true color) with a dark fallback, a 3D globe, and layers for activity, anomaly, emerging hot spots, outlook and live fires. A time playbar runs across the full record with a month filter.
+- **Insights panel**
+  - *Calendar*: years × months heatmap with glowing anomaly cells and hover popovers.
+  - *Trends*: naive vs harmonized annual series; season onset, peak and length with trend tests.
+  - *Hot spots*: emerging hot-spot analysis (Getis-Ord Gi* + Mann-Kendall): new, intensifying, persistent, diminishing.
+  - *Outlook*: next months' expected fire-days with likely range, validated by a 10-year hindcast against climatology.
+  - *Live*: last 7 days of NASA FIRMS near-real-time detections vs normal (Bangladesh).
+  - *Science*: see below.
 - **Before/After harmonization toggle** with an animated counter.
-- **FireCal Analyst** (Claude): streaming chat, auto-insight cards when you click an anomalous month, and responder briefs. It is grounded only in the computed statistics. Without an API key, an offline rule-based analyst answers instead.
-- **Early-warning PDF brief** export.
+- **AI analyst** with tools. It runs real statistics (area overview, ranking, period comparison, hot spots, season timing, outlook, live fires, country ranking, fire science) and drives the dashboard itself: it moves the map, switches layers and opens tabs. It is grounded only in computed numbers. Without an API key, a free offline analyst answers instead.
+- **Early-warning PDF brief** export, **presentation mode** (guided tour), and shareable URLs (state lives in the URL hash).
+- **Explain page** (`/explain`): narrated, animated stories for ages 3–5, ages 15–20 and seniors, plus "why this data matters", with a quiz.
 
-## Quick start
+## Science tab: what a fire scientist asks next
 
-Requires Node.js 22+.
+| Question | Method | Source |
+|---|---|---|
+| Does the climate drive it? | Pearson r between pre-season NOAA ONI (6 months before the peak season) and the detrended log fire-season anomaly; Fisher-z p-value. Ranks the countries whose fire seasons track El Niño / La Niña. | `src/lib/science.ts`, `pipeline/fetch-oni.ts` |
+| How intense are the fires? | VIIRS fire radiative power (FRP) per fire-day and night-time share per year, with Mann-Kendall trends | `src/lib/science.ts` |
+| How does the land burn? | Individual fires rebuilt by linking VIIRS fire-days that touch in space (8-neighbour, ~1 km) and time (±1 day), in the style of the Global Fire Atlas; burned footprint, re-burn share and burn return interval per ~1 km cell | `pipeline/grid-builder.ts`, `src/lib/science.ts` |
 
-```bash
-npm install
-cp .env.example .env         # optional: add ANTHROPIC_API_KEY for the Claude analyst
-npm run dev                  # web on http://localhost:5173, API on :8787
-```
-
-Production: `npm run build && npm start` (serves `dist/` and the API on port 8787).
+Examples from the real record:
+- The Philippines, Venezuela, Colombia and Thailand burn significantly more after El Niño. Botswana and South Africa burn more after La Niña, when wet years grow more grass fuel.
+- Bangladesh shows **no** significant ENSO link (p > 0.4), so local land use dominates there.
+- In the Chittagong Hill Tracts, **83%** of the land that burned (2012–2024) burned again. The typical return time is **1 year**, the signature of very short *jhum* fallow cycles.
 
 ## Data: real NASA FIRMS archive
 
@@ -62,6 +71,16 @@ npm run data:ingest                  # → public/data/grid.json + points.json
 npm run data:sample                  # (synthetic demo data instead)
 ```
 
+### Global record
+
+`.github/workflows/global-data.yml` downloads the FIRMS **all-countries** yearly archives (MODIS + VIIRS S-NPP, 2003–2024, hundreds of millions of detections). It processes one year per parallel job (`npm run data:global-year`). The merge step (`npm run data:global-merge`) writes:
+- `public/data/global/countries.json`: per country × month, with fire-days, detections, FRP and night counts for each sensor.
+- `public/data/global/grid1.json`: 1° cells × year, plus a monthly climatology.
+
+The merge refuses to write a record with missing years.
+
+`.github/workflows/live-fires.yml` refreshes the 7-day live feed and the NOAA ONI index twice a day.
+
 ### What the real record shows (full study area)
 
 - Peak burning is **March–April** (hill-farming *jhum* burning across the Chittagong Hill Tracts, Tripura, Mizoram and Meghalaya).
@@ -78,22 +97,29 @@ NASA-inspired mission-control design: Inter + DM Mono, flat panels with HUD fram
 ```
 src/
   lib/harmonize.ts     harmonization, anomalies, Mann-Kendall (shared)
-  lib/types.ts         data contracts
-  components/          MapPanel, CalendarPanel, AnalystPanel, Header, EmberCanvas
+  lib/analytics.ts     emerging hot spots, season timing, outlook + hindcast
+  lib/global.ts        country analyses and the 1° world grid
+  lib/science.ts       ENSO link, fire intensity, fire regime
+  components/          maps, sidebar, insight tabs, analyst, tour
+  explain/             animated stories page
 server/
-  index.ts             Express API: /api/analyst (SSE), /api/health
-  context.ts           grounding facts sent to Claude
-  offline.ts           no-key fallback analyst
-pipeline/              sample generator, FIRMS fetch + ingest
+  index.ts             Express API: /api/analyst (SSE), /api/live, /api/health
+  tools.ts             analyst tools (statistics + dashboard control)
+  openrouter.ts        OpenRouter client with budget ledger
+  context.ts           grounding facts for the model
+  offline.ts           free offline analyst
+pipeline/              FIRMS fetch + ingest, global per-year + merge, live feed, ONI
 tests/                 node:test checks on the harmonization
 ```
 
 ## Tech
 
-React 19 + Vite, Tailwind CSS v4, Framer Motion, Leaflet (CARTO dark tiles), Recharts, jsPDF, Express, Anthropic SDK (`claude-opus-5-5`, streaming, prompt caching, server-side refusal fallback).
+React 19 + Vite, Tailwind CSS v4, Framer Motion, Leaflet + d3-geo, Recharts, jsPDF, Express, OpenRouter / Anthropic SDK.
 
 ## Known limitations
 
-- 2001 to mid-2002 has only Terra (no Aqua), so that period is under-detected even after harmonization.
+- The record starts in 2003: 2001 to mid-2002 had only Terra (no Aqua) and is left out.
+- Country records use one k per country; the 1° world grid uses one global k.
+- The ENSO test uses about 20 seasons, so only strong links reach significance.
 - k is one factor per area. A per-season or per-land-cover calibration would be more accurate.
 - The AI analyst can still make mistakes. Briefs carry an "AI-generated, verify before operational use" note.
