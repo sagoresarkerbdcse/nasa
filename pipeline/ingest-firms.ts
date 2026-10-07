@@ -27,11 +27,16 @@ if (!inputs.length) {
   process.exit(1);
 }
 
+// 2003 is the first full year with both Terra and Aqua MODIS. The 2001-2002
+// country archives are also visibly incomplete (March 2002 has <10% of a
+// normal March), so starting there would fake a trend.
+const FIRST_YEAR = Number(process.env.FIRECAL_FIRST_YEAR ?? 2003);
+
 const builder = new GridBuilder({
   bounds: DOMAIN,
   cellSize: 0.25,
   fireDayGrid: 0.01,
-  firstYear: 2001,
+  firstYear: FIRST_YEAR,
   viirsStartYear: 2012,
   pointsPerYear: 900,
 });
@@ -90,6 +95,6 @@ const out = builder.write(
   "public/data/grid.json",
   "public/data/points.json",
   "firms",
-  "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m active fire archive. Harmonized with confidence filtering, 0.01° fire-day gridding, and overlap calibration.",
+  `NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m standard archive (country yearly files for Bangladesh, India, Myanmar, clipped). Static land sources and offshore detections removed. Record starts ${FIRST_YEAR}, the first full Terra + Aqua year.`,
 );
 console.log(`firms: ${builder.count.toLocaleString()} detections → ${out.cells} cells, ${out.records} cell-months, through ${out.lastYear}-${out.lastMonth}`);
