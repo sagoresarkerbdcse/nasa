@@ -58,6 +58,9 @@ interface Props {
   onCountry?: (name: string) => void;
 }
 
+const pv = (p: number) => (p < 0.001 ? "< 0.001" : `= ${p}`);
+const tone = (t: { r: number; p: number }) => (t.p < 0.05 ? (t.r > 0 ? "text-nasa-red" : "text-signal") : undefined);
+
 export function ScienceTab({ analysis, oni, cf, intensityFor, grid, bbox, ensoRank, onCountry }: Props) {
   const enso = useMemo(() => (oni ? ensoLink(analysis, oni) : null), [analysis, oni]);
   const inten = useMemo(() => (cf && intensityFor !== undefined ? intensity(cf, intensityFor) : null), [cf, intensityFor]);
@@ -76,27 +79,31 @@ export function ScienceTab({ analysis, oni, cf, intensityFor, grid, bbox, ensoRa
         {enso && (
           <>
             <div className="grid grid-cols-3 gap-2">
-              <Stat label="Correlation r" value={enso.r} sub={`p = ${enso.p} · n = ${enso.n} seasons`} tone={enso.p < 0.05 ? (enso.r > 0 ? "text-nasa-red" : "text-signal") : undefined} />
-              <Stat label="Per +1 °C ONI" value={`${enso.pctPerDegree > 0 ? "+" : ""}${enso.pctPerDegree}%`} sub="fire-season activity" />
-              <Stat label="Verdict" value={<span className="text-[13px]">{enso.verdict}</span>} sub={`ONI ${enso.window} → peak season`} />
+              <Stat label={`Same season · ${enso.season}`} value={`r ${enso.concurrent.r}`} sub={`p ${pv(enso.concurrent.p)} · ${enso.concurrent.pctPerDegree > 0 ? "+" : ""}${enso.concurrent.pctPerDegree}%/°C`} tone={tone(enso.concurrent)} />
+              <Stat label={`6-mo lead · ${enso.lead.window}`} value={`r ${enso.lead.r}`} sub={`p ${pv(enso.lead.p)} · ${enso.lead.pctPerDegree > 0 ? "+" : ""}${enso.lead.pctPerDegree}%/°C`} tone={tone(enso.lead)} />
+              <Stat label="Verdict" value={<span className="text-[13px]">{enso.verdict}</span>} sub={enso.predictable ? "predictable months ahead" : `n = ${enso.n} seasons`} />
             </div>
             <div className="h-[170px]">
               <ResponsiveContainer>
                 <ScatterChart margin={{ top: 8, right: 10, left: -12, bottom: 4 }}>
                   <CartesianGrid stroke="rgba(255,255,255,0.05)" />
-                  <XAxis type="number" dataKey="oni" name="ONI" tick={axis} tickLine={false} axisLine={false} domain={["dataMin - 0.2", "dataMax + 0.2"]} label={{ value: "pre-season ONI (°C)", fill: "#7b8494", fontSize: 10, position: "insideBottomRight", offset: -2 }} />
+                  <XAxis type="number" dataKey="oni" name="ONI" tick={axis} tickLine={false} axisLine={false} domain={["dataMin - 0.2", "dataMax + 0.2"]} label={{ value: `${enso.best === "lead" ? "pre-season" : "same-season"} ONI (°C)`, fill: "#7b8494", fontSize: 10, position: "insideBottomRight", offset: -2 }} />
                   <YAxis type="number" dataKey="anomalyPct" name="Fire anomaly" unit="%" tick={axis} tickLine={false} axisLine={false} />
                   <ZAxis type="number" range={[60, 60]} />
                   <ReferenceLine x={0} stroke="rgba(255,255,255,0.2)" />
                   <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
                   <Tooltip {...tip} cursor={{ strokeDasharray: "3 3" }} formatter={(v: unknown, n?: unknown) => [String(v), String(n)]} labelFormatter={() => ""} />
-                  <Scatter data={enso.points} fill="#ff7a1a" stroke="#0c1016" strokeWidth={2} />
+                  <Scatter data={enso[enso.best].points} fill="#ff7a1a" stroke="#0c1016" strokeWidth={2} />
                 </ScatterChart>
               </ResponsiveContainer>
             </div>
             <p className="text-[11px] leading-snug text-slate-400">
-              Each dot is one fire season: the Pacific's state in the six months before (x) against how far that season's burning departed from its long-term trend (y).{" "}
-              {enso.p < 0.05 ? "The link is statistically significant, so ENSO forecasts can give months of early warning here." : "No significant link: local factors (farming practice, local dryness) matter more here than the Pacific."}
+              Each dot is one fire season: the Pacific's state ({enso.best === "lead" ? "in the six months before" : "during the season"}, x) against how far that season's burning departed from its long-term trend (y).{" "}
+              {enso.predictable
+                ? "The link already shows six months ahead, so ENSO forecasts give early warning here."
+                : enso.p < 0.05
+                  ? "The link is significant during the season but weak six months ahead: El Niño's arrival is the warning sign to watch."
+                  : "No significant link: local factors (farming practice, local dryness) matter more here than the Pacific."}
             </p>
           </>
         )}

@@ -279,7 +279,14 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
       return {
         area: area.name,
         enso_link: enso
-          ? { r: enso.r, p: enso.p, seasons: enso.n, oni_window: enso.window, pct_change_per_degC: enso.pctPerDegree, verdict: enso.verdict }
+          ? {
+              seasons: enso.n,
+              fire_season: enso.season,
+              same_season: { r: enso.concurrent.r, p: enso.concurrent.p, pct_change_per_degC: enso.concurrent.pctPerDegree },
+              six_month_lead: { oni_window: enso.lead.window, r: enso.lead.r, p: enso.lead.p, pct_change_per_degC: enso.lead.pctPerDegree },
+              verdict: enso.verdict,
+              predictable_months_ahead: enso.predictable,
+            }
           : "not available (ONI not loaded or too few seasons)",
         intensity: inten
           ? { scope: intenName ?? "World", frp_mw_per_fire_day: inten.meanFrp, frp_trend: inten.frpTrend, night_share: inten.meanNight, night_trend: inten.nightTrend }

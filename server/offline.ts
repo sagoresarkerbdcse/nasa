@@ -317,12 +317,16 @@ ${ov.top_anomalies?.[0] ? `- Biggest anomaly: **${ymLabel(ov.top_anomalies[0].mo
 function science(r: any): string {
   const out: string[] = [`**Fire science · ${r.area}**`, ""];
   const e = r.enso_link;
-  if (typeof e === "object")
+  if (typeof e === "object") {
+    const sig = e.same_season.p < 0.05 || e.six_month_lead.p < 0.05;
     out.push(
-      `- **El Niño / La Niña:** r = ${e.r} (p = ${e.p}, ${e.seasons} seasons, ONI ${e.oni_window}). ${
-        e.p < 0.05 ? `Significant: each +1 °C of ONI shifts the fire season by ${e.pct_change_per_degC > 0 ? "+" : ""}${e.pct_change_per_degC}% (${e.verdict}). ENSO forecasts give months of early warning here.` : "No significant link; local land use and weather dominate."
+      `- **El Niño / La Niña (${e.seasons} fire seasons, ${e.fire_season}):** same-season r = ${e.same_season.r} (p ${pv(e.same_season.p)}); six months ahead r = ${e.six_month_lead.r} (p ${pv(e.six_month_lead.p)}). ${
+        sig
+          ? `${e.verdict}: ${Math.abs(e.same_season.pct_change_per_degC)}% ${e.same_season.pct_change_per_degC > 0 ? "more" : "less"} fire per +1 °C of ONI.${e.predictable_months_ahead ? " The signal is visible six months ahead, so ENSO forecasts give early warning here." : ""}`
+          : "No significant link; local land use and weather dominate."
       }`,
     );
+  }
   const i = r.intensity;
   if (typeof i === "object")
     out.push(
@@ -341,3 +345,4 @@ function science(r: any): string {
 }
 
 const SCIENCE_RE = /el ni|la ni|enso|climate|pacific|frp|radiative|intensity|night|re-?burn|return interval|fire size|individual fire|regime|science/;
+const pv = (p: number) => (p < 0.001 ? "< 0.001" : `= ${p}`);

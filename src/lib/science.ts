@@ -44,38 +44,56 @@ export function pearson(xs: number[], ys: number[]) {
   return { r: Math.round(r * 100) / 100, p: Math.round(2 * (1 - normalCdf(Math.abs(z))) * 1000) / 1000, n, slope: sxx ? sxy / sxx : 0 };
 }
 
-export interface EnsoLink {
+export interface EnsoTest {
   r: number;
   p: number;
-  n: number;
-  window: string; // e.g. "Sep–Feb"
   pctPerDegree: number; // % change in fire-season activity per +1 °C ONI
+  window: string; // ONI months used, e.g. "Feb–Jul"
   points: { year: number; oni: number; anomalyPct: number }[];
+}
+
+export interface EnsoLink {
+  n: number;
+  season: string; // fire season, e.g. "Aug–Oct"
+  /** ONI during the fire season itself: the physical link. */
+  concurrent: EnsoTest;
+  /** Mean ONI over the 6 months before the season: usable as an early warning. */
+  lead: EnsoTest;
+  /** The stronger of the two (used for ranking and the chart). */
+  best: "concurrent" | "lead";
+  r: number;
+  p: number;
+  pctPerDegree: number;
   verdict: "El Niño → more fire" | "La Niña → more fire" | "no clear link";
+  predictable: boolean; // lead test significant
 }
 
 /**
- * Fire season = the 3 months centred on the climatological peak; predictor =
- * mean ONI over the 6 months before the season starts (the pre-season state
- * of the Pacific). Fire values are detrended (Sen's slope) and expressed as
- * log-anomalies so wet and dry regions are comparable.
+ * Fire season = the 3 months centred on the climatological peak. Fire values
+ * are log-transformed and detrended (least squares) so long-term change does
+ * not masquerade as a climate signal, then correlated with NOAA ONI twice:
+ * during the season (concurrent) and over the 6 months before it (lead).
  */
 export function ensoLink(a: AoiAnalysis, oni: OniFile): EnsoLink | null {
   const peak = a.peakMonths[0];
   const byIdx = new Map(a.months.filter((m) => !m.missing).map((m) => [m.year * 12 + (m.month - 1), m.harmonized]));
   const label = (idx: number) => `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}`;
+  const mean = (idx: number[]) => {
+    const v = idx.map((i) => oni.values[label(i)]);
+    return v.every((x) => x !== undefined) ? v.reduce((s, x) => s + x, 0) / v.length : undefined;
+  };
   const years = [...new Set(a.months.map((m) => m.year))];
-  const rows: { year: number; fire: number; oni: number }[] = [];
+  const rows: { year: number; fire: number; conc: number; lead: number }[] = [];
   for (const y of years) {
     const peakIdx = y * 12 + (peak - 1);
     const season = [peakIdx - 1, peakIdx, peakIdx + 1];
     if (!season.every((i) => byIdx.has(i))) continue;
     const fire = season.reduce((s, i) => s + byIdx.get(i)!, 0);
-    const win = [1, 2, 3, 4, 5, 6].map((k) => oni.values[label(season[0] - k)]).filter((v): v is number => v !== undefined);
-    if (win.length === 6 && fire > 0) rows.push({ year: y, fire, oni: win.reduce((s, v) => s + v, 0) / 6 });
+    const conc = mean(season);
+    const lead = mean([1, 2, 3, 4, 5, 6].map((k) => season[0] - k));
+    if (fire > 0 && conc !== undefined && lead !== undefined) rows.push({ year: y, fire, conc, lead });
   }
   if (rows.length < 8) return null;
-  // Detrend log fire activity with a least-squares line, then correlate residuals with ONI.
   const logs = rows.map((r) => Math.log1p(r.fire));
   const xs = rows.map((r) => r.year);
   const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
@@ -88,21 +106,37 @@ export function ensoLink(a: AoiAnalysis, oni: OniFile): EnsoLink | null {
   });
   const slope = bxx ? b / bxx : 0;
   const resid = logs.map((l, i) => l - (ml + slope * (xs[i] - mx)));
-  const st = pearson(
-    rows.map((r) => r.oni),
-    resid,
-  );
-  const startMonth = ((peak - 2 + 12) % 12) + 1; // season start
-  const winFirst = ((startMonth - 7 + 24) % 12) + 1;
-  const winLast = ((startMonth - 2 + 12) % 12) + 1;
+
+  const m = (k: number) => MONTHS[((k % 12) + 12) % 12];
+  const s0 = peak - 2; // season start, 0-based month
+  const test = (key: "conc" | "lead", window: string): EnsoTest => {
+    const st = pearson(
+      rows.map((r) => r[key]),
+      resid,
+    );
+    return {
+      r: st.r,
+      p: st.p,
+      pctPerDegree: Math.round((Math.exp(st.slope) - 1) * 100),
+      window,
+      points: rows.map((r, i) => ({ year: r.year, oni: Math.round(r[key] * 100) / 100, anomalyPct: Math.round((Math.exp(resid[i]) - 1) * 100) })),
+    };
+  };
+  const concurrent = test("conc", `${m(s0)}–${m(s0 + 2)}`);
+  const lead = test("lead", `${m(s0 - 6)}–${m(s0 - 1)}`);
+  const best = lead.p < 0.05 && Math.abs(lead.r) >= Math.abs(concurrent.r) ? "lead" : concurrent.p <= lead.p ? "concurrent" : "lead";
+  const t = best === "lead" ? lead : concurrent;
   return {
-    r: st.r,
-    p: st.p,
-    n: st.n,
-    window: `${MONTHS[winFirst - 1]}–${MONTHS[winLast - 1]}`,
-    pctPerDegree: Math.round((Math.exp(st.slope) - 1) * 100),
-    points: rows.map((r, i) => ({ year: r.year, oni: Math.round(r.oni * 100) / 100, anomalyPct: Math.round((Math.exp(resid[i]) - 1) * 100) })),
-    verdict: st.p < 0.05 ? (st.r > 0 ? "El Niño → more fire" : "La Niña → more fire") : "no clear link",
+    n: rows.length,
+    season: concurrent.window,
+    concurrent,
+    lead,
+    best,
+    r: t.r,
+    p: t.p,
+    pctPerDegree: t.pctPerDegree,
+    verdict: t.p < 0.05 ? (t.r > 0 ? "El Niño → more fire" : "La Niña → more fire") : "no clear link",
+    predictable: lead.p < 0.05,
   };
 }
 
@@ -150,6 +184,7 @@ export interface EnsoRankRow {
   p: number;
   pctPerDegree: number;
   window: string;
+  predictable: boolean;
 }
 
 /** Countries whose fire seasons track ENSO most strongly (significant only). */
@@ -158,7 +193,7 @@ export function ensoRanking(cf: CountriesFile, analyses: { name: string; analysi
   return analyses
     .map(({ name, analysis }) => {
       const l = ensoLink(analysis, oni);
-      return l ? { name, r: l.r, p: l.p, pctPerDegree: l.pctPerDegree, window: l.window } : null;
+      return l ? { name, r: l.r, p: l.p, pctPerDegree: l.pctPerDegree, window: l[l.best].window, predictable: l.predictable } : null;
     })
     .filter((x): x is EnsoRankRow => Boolean(x && x.p < 0.05))
     .sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
