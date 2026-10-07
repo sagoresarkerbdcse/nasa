@@ -2,9 +2,10 @@
  * Ingests real NASA FIRMS hotspot CSVs (MODIS C6.1 and/or VIIRS S-NPP 375 m)
  * and writes public/data/grid.json + points.json.
  *
- * Get the CSVs either from the FIRMS Archive Download tool
- * (https://firms.modaps.eosdis.nasa.gov/download/) for the bounding box
- * 88.0,20.5,92.75,26.75 or with `npm run data:fetch`. Then:
+ * Get the CSVs with `npm run data:fetch-country` (public yearly archives, no
+ * key), `npm run data:fetch` (Area API, needs FIRMS_MAP_KEY) or the FIRMS
+ * Archive Download tool (https://firms.modaps.eosdis.nasa.gov/download/)
+ * for the bounding box 88.0,20.5,92.75,26.75. Then:
  *
  *   npm run data:ingest -- pipeline/raw            # every *.csv in the folder
  *   npm run data:ingest -- a.csv b.csv             # specific files
@@ -51,6 +52,7 @@ for (const file of inputs) {
   let header: string[] | null = null;
   let col: Record<string, number> = {};
   let rows = 0;
+  let skipped = 0;
   for await (const line of rl) {
     if (!line.trim()) continue;
     const parts = line.split(",");
@@ -63,6 +65,12 @@ for (const file of inputs) {
     const sensor: 0 | 1 = instrument.includes("VIIRS") || "bright_ti4" in col ? 1 : 0;
     const [y, m, d] = (parts[col.acq_date] ?? "").split("-").map(Number);
     if (!y) continue;
+    // Archive "type": 0 vegetation fire, 1 volcano, 2 static land source (gas flares,
+    // kilns, industry), 3 offshore. Keep only vegetation/landscape fires.
+    if ("type" in col && (parts[col.type] === "2" || parts[col.type] === "3")) {
+      skipped++;
+      continue;
+    }
     builder.add({
       lon: Number(parts[col.longitude]),
       lat: Number(parts[col.latitude]),
@@ -75,7 +83,7 @@ for (const file of inputs) {
     });
     rows++;
   }
-  console.log(`${file}: ${rows.toLocaleString()} rows`);
+  console.log(`${file}: ${rows.toLocaleString()} rows${skipped ? `, ${skipped} static/offshore skipped` : ""}`);
 }
 
 const out = builder.write(

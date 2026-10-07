@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "FireCal AI — harmonized MODIS + VIIRS burning-activity calendar with an AI analyst (NASA Space Apps 2026).",
+  "description": "FireCal AI \u2014 harmonized MODIS + VIIRS burning-activity calendar with an AI analyst (NASA Space Apps 2026).",
   "scripts": {
     "dev": "concurrently -k -n api,web -c yellow,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "vite",
@@ -14,7 +14,8 @@
     "test": "tsx --test tests/*.test.ts",
     "data:sample": "tsx pipeline/generate-sample.ts",
     "data:ingest": "tsx pipeline/ingest-firms.ts",
-    "data:fetch": "tsx pipeline/fetch-firms.ts"
+    "data:fetch": "tsx pipeline/fetch-firms.ts",
+    "data:fetch-country": "tsx pipeline/fetch-firms-country.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

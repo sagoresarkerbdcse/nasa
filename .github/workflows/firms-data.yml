@@ -1,0 +1,65 @@
+name: Refresh NASA FIRMS data
+
+# Downloads the real MODIS + VIIRS hotspot record, harmonizes it, and commits
+# public/data/grid.json + points.json. Runs monthly and on demand.
+on:
+  workflow_dispatch:
+    inputs:
+      from_year:
+        description: First year to download
+        default: "2001"
+  schedule:
+    - cron: "17 3 2 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firms-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache clipped FIRMS archives
+        uses: actions/cache@v4
+        with:
+          path: pipeline/raw
+          key: firms-raw-${{ github.run_id }}
+          restore-keys: firms-raw-
+
+      - name: Download FIRMS country yearly archives (no key needed)
+        id: archive
+        run: npm run data:fetch-country -- ${{ inputs.from_year || '2001' }}
+
+      - name: Top up the current year via the FIRMS Area API (needs FIRMS_MAP_KEY secret)
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+        if: env.FIRMS_MAP_KEY != ''
+        run: npm run data:fetch -- "$(( ${{ steps.archive.outputs.last_year }} + 1 ))-01-01"
+
+      - name: Harmonize into grid.json / points.json
+        run: npm run data:ingest -- pipeline/raw
+
+      - name: Test
+        run: npm test
+
+      - name: Commit data
+        run: |
+          git config user.name "firecal-data-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
+          git commit -m "data: refresh NASA FIRMS MODIS + VIIRS record"
+          git push
