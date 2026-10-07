@@ -2,6 +2,8 @@
 
 **NASA Space Apps Challenge 2026: Harmonization of MODIS and VIIRS Hot Spots**
 
+> Independent hackathon project. Not affiliated with or endorsed by NASA.
+
 FireCal AI turns 25 years of satellite fire detections into one **consistent burning-activity calendar** for any area of interest. It also includes an **AI analyst** that explains peak seasons and anomalies and writes early-warning briefs for responders.
 
 Focus area: Bangladesh and its border fire belts (Sylhet, the Sundarbans, the Chittagong Hill Tracts, Tripura, Mizoram, Meghalaya, West Bengal and Rakhine).
@@ -25,7 +27,7 @@ The browser, the API server and the tests all use the same harmonization engine 
 
 ## Features
 
-- **Interactive map**: Harmonized / MODIS / VIIRS switcher, preset areas or **draw your own AOI**, a time playbar across 2001–2026 with a month filter, and ember particles over the hottest areas.
+- **Interactive map**: NASA GIBS imagery, Harmonized / MODIS / VIIRS switcher, preset areas or **draw your own AOI**, a time playbar across 2001–2026 with a month filter, and ember particles over the hottest areas.
 - **Fire calendar matrix**: years × months heatmap, glowing anomaly cells, hover popovers (hotspots, fire-days, HCI, MODIS:VIIRS ratio, % vs 10-yr average), and an annual chart that shows the naive jump next to the harmonized series.
 - **Before/After harmonization toggle** with an animated counter.
 - **FireCal Analyst** (Claude): streaming chat, auto-insight cards when you click an anomalous month, and responder briefs. It is grounded only in the computed statistics. Without an API key, an offline rule-based analyst answers instead.
@@ -37,22 +39,39 @@ Requires Node.js 22+.
 
 ```bash
 npm install
-npm run data:sample          # synthetic demo data (already committed in public/data)
 cp .env.example .env         # optional: add ANTHROPIC_API_KEY for the Claude analyst
 npm run dev                  # web on http://localhost:5173, API on :8787
 ```
 
 Production: `npm run build && npm start` (serves `dist/` and the API on port 8787).
 
-## Use real NASA FIRMS data
+## Data: real NASA FIRMS archive
 
-The committed data is **synthetic**, and the UI shows a "SAMPLE DATA" badge. Its seasonal patterns follow real regional burning practices, but the yearly values and anomalies are invented. To use the real record:
+`public/data/` holds the **real NASA FIRMS record, 2003–2024**: MODIS C6.1 + VIIRS S-NPP 375 m standard-quality archives for Bangladesh, India and Myanmar, clipped to the study area (88.0–92.75°E, 20.5–26.75°N). That is 710,000+ detections after removing static industrial sources such as gas flares and brick kilns, plus offshore detections.
 
-1. Get a free FIRMS MAP_KEY: https://firms.modaps.eosdis.nasa.gov/api/map_key/
-2. Get the CSVs for the bounding box `88.0,20.5,92.75,26.75`:
-   - the full archive is fastest via the [FIRMS Archive Download](https://firms.modaps.eosdis.nasa.gov/download/) (MODIS C6.1 + VIIRS S-NPP 375 m), saved into `pipeline/raw/`, or
-   - `FIRMS_MAP_KEY=... npm run data:fetch -- 2024-01-01 2026-09-30` (Area API, 10-day chunks, resumable)
-3. `npm run data:ingest` rebuilds `public/data/grid.json` and `points.json`. The badge switches to "NASA FIRMS".
+- The record starts in **2003**, the first full Terra + Aqua year. The 2001–2002 archives are visibly incomplete for this area and would fake a trend.
+- `.github/workflows/firms-data.yml` refreshes the data monthly (and on demand from the Actions tab). It downloads the public FIRMS country-yearly archives (no key needed), harmonizes them, runs the tests and commits the result.
+- **Current-year data:** add a free [FIRMS MAP_KEY](https://firms.modaps.eosdis.nasa.gov/api/map_key/) as the repository secret `FIRMS_MAP_KEY`. The workflow then tops up the months after the last published archive year through the FIRMS Area API.
+
+Locally:
+
+```bash
+npm run data:fetch-country           # public yearly archives → pipeline/raw/
+FIRMS_MAP_KEY=... npm run data:fetch -- 2025-01-01   # optional NRT top-up
+npm run data:ingest                  # → public/data/grid.json + points.json
+npm run data:sample                  # (synthetic demo data instead)
+```
+
+### What the real record shows (full study area)
+
+- Peak burning is **March–April** (hill-farming *jhum* burning across the Chittagong Hill Tracts, Tripura, Mizoram and Meghalaya).
+- VIIRS records **k ≈ 2.2–2.8×** the MODIS fire-days. The naive record jumps ~3–4× in 2012. The harmonized record doesn't.
+- Burning has **declined significantly** since 2003 (Sen's slope ≈ −580 fire-days/yr, Mann-Kendall p = 0.002). MODIS alone shows the same decline, so it is not a harmonization artifact.
+- The largest recent anomaly is **April 2023** (+88% vs the 10-year average).
+
+## Interface
+
+NASA-inspired mission-control design: Inter + DM Mono, flat panels with HUD framing, a mission header with live UTC and satellite status, and count-up mission stats. The map has NASA GIBS basemaps (VIIRS Black Marble, Blue Marble, and true-color imagery for the selected date) with automatic fallback to a dark basemap. It also has a satellite swath sweep, fire cells that pop in on every year change, and ember particles. There is a boot sequence, staggered panel entrances, and cascading calendar reveals. Reduced-motion preferences are respected.
 
 ## Project layout
 

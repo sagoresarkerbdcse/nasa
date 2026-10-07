@@ -23,8 +23,10 @@ export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string): 
   const analysis = analyzeAoi(grid, bbox);
   const { lastYear, lastMonth, source, firstYear, viirsStartYear } = grid.meta;
 
+  // Outlook = the next two calendar months from today, judged against the record's climatology.
+  const now = new Date();
   const outlookMonths = [1, 2].map((i) => {
-    const idx = lastYear * 12 + (lastMonth - 1) + i;
+    const idx = now.getUTCFullYear() * 12 + now.getUTCMonth() + i;
     return { year: Math.floor(idx / 12), month: (idx % 12) + 1 };
   });
 
@@ -49,7 +51,7 @@ export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string): 
     .join("\n");
 
   const text = `<fire_data>
-DATA SOURCE: ${source === "sample" ? "SYNTHETIC DEMO DATA (simulated MODIS+VIIRS record; seasonal patterns realistic, yearly values and events invented). Say so if asked about real-world events." : "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m active fire archive."}
+DATA SOURCE: ${source === "sample" ? "SYNTHETIC DEMO DATA (simulated MODIS+VIIRS record; seasonal patterns realistic, yearly values and events invented). Say so if asked about real-world events." : "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m standard archive, static industrial sources and offshore detections removed."}
 AREA OF INTEREST: ${regionName} — bbox ${formatBBox(bbox)} (${a.cellCount} grid cells of ${grid.meta.cellSize}°)
 RECORD: ${firstYear}-01 to ${lastYear}-${String(lastMonth).padStart(2, "0")}. VIIRS available from ${viirsStartYear}.
 UNITS: "harmonized" = fire-days in VIIRS-equivalent units (unique 0.01° cell × day with a nominal/high-confidence detection; MODIS era scaled by k).
@@ -60,7 +62,8 @@ CLIMATOLOGY (mean harmonized fire-days per month, share of annual): ${a.climatol
 PEAK MONTHS: ${a.peakMonths.map((m) => MONTHS[m - 1]).join(", ")}
 ANNUAL HARMONIZED: ${a.annual.map((y) => `${y.year}:${Math.round(y.harmonized)}`).join(" ")}${lastMonth < 12 ? ` (${lastYear} partial)` : ""}
 FLAGGED ANOMALIES (vs same month, previous 10 yrs): ${a.anomalies.slice(0, 15).map((m) => `${m.year}-${String(m.month).padStart(2, "0")} ${m.anomaly} (${m.harmonized} vs baseline ${m.baseline}, ${m.pctVsBaseline! >= 0 ? "+" : ""}${m.pctVsBaseline}%, z=${m.z}, HCI ${m.hci})`).join("; ") || "none"}
-OUTLOOK MONTHS (next after record end): ${outlookMonths.map((o) => `${MONTHS[o.month - 1]} ${o.year} — climatology ${a.climatology[o.month - 1].mean} fire-days`).join("; ")}
+TODAY: ${now.toISOString().slice(0, 10)}${lastYear < now.getUTCFullYear() - 1 ? ` (the archive ends ${lastYear}-${String(lastMonth).padStart(2, "0")}; say so when discussing recent conditions)` : ""}
+OUTLOOK MONTHS (next two calendar months from today): ${outlookMonths.map((o) => `${MONTHS[o.month - 1]} ${o.year} — climatology ${a.climatology[o.month - 1].mean} fire-days`).join("; ")}
 RECURRING HOT CELLS FOR OUTLOOK MONTHS (avg VIIRS fire-days/yr, last 5 yrs): ${hotCells.map((h) => `${h.lat.toFixed(2)}N ${h.lon.toFixed(2)}E: ${h.fireDays}`).join("; ") || "none"}
 MONTHLY TABLE (month,harmonized,naive,modis_raw,viirs_raw,hci,z,pct_vs_10yr,anomaly):
 ${monthly}
