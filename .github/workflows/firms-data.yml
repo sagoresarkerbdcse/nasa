@@ -67,11 +67,11 @@ jobs:
           git config user.name "firecal-data-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Re-base the freshly built data onto the latest main without merging data files.
-          rm -rf /tmp/fc-new && mkdir -p /tmp/fc-new && cp -r public/data /tmp/fc-new/
+          rm -rf /tmp/fc-new && mkdir -p /tmp/fc-new && cp public/data/grid.json public/data/points.json /tmp/fc-new/
           git fetch origin main
           git reset --hard origin/main
-          cp -r /tmp/fc-new/$(basename public/data) $(dirname public/data)/
-          git add public/data
+          cp /tmp/fc-new/grid.json /tmp/fc-new/points.json public/data/
+          git add public/data/grid.json public/data/points.json
           if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
           git commit -m "data: refresh data"
           git push origin HEAD:main
