@@ -1,0 +1,5 @@
+node_modules
+dist
+pipeline/raw
+.env
+*.log

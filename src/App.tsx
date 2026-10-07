@@ -1,0 +1,240 @@
+import { AnimatePresence, motion } from "framer-motion";
+import { Flame, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnalystPanel, type ExportState } from "./components/AnalystPanel";
+import { CalendarPanel } from "./components/CalendarPanel";
+import { Header } from "./components/Header";
+import { MapPanel } from "./components/MapPanel";
+import { analyzeAoi } from "./lib/harmonize";
+import { MONTHS_LONG, REGIONS, formatBBox } from "./lib/regions";
+import type { BBox, GridFile, MonthStat, PointsFile, SensorView } from "./lib/types";
+import { useAnalyst } from "./lib/useAnalyst";
+
+export function App() {
+  const [grid, setGrid] = useState<GridFile | null>(null);
+  const [points, setPoints] = useState<PointsFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<{ llm: boolean; model: string | null } | null>(null);
+
+  useEffect(() => {
+    fetch("/data/grid.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`grid.json: HTTP ${r.status}`))))
+      .then(setGrid)
+      .catch((e) => setError(String(e.message ?? e)));
+    fetch("/data/points.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => p && setPoints(p))
+      .catch(() => {});
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then(setHealth)
+      .catch(() => setHealth({ llm: false, model: null }));
+  }, []);
+
+  if (error) return <Splash message={`Could not load data (${error}). Run \`npm run data:sample\`.`} />;
+  if (!grid) return <Splash message="Harmonizing 25 years of satellite fire data…" loading />;
+  return <Dashboard grid={grid} points={points} health={health} />;
+}
+
+function Dashboard({ grid, points, health }: { grid: GridFile; points: PointsFile | null; health: { llm: boolean; model: string | null } | null }) {
+  const [regionId, setRegionId] = useState("domain");
+  const [customBBox, setCustomBBox] = useState<BBox | null>(null);
+  const [view, setView] = useState<SensorView>("harmonized");
+  const [year, setYear] = useState(grid.meta.lastMonth === 12 ? grid.meta.lastYear : grid.meta.lastYear - 1);
+  const [month, setMonth] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [harmonized, setHarmonized] = useState(true);
+  const [selected, setSelected] = useState<{ year: number; month: number } | null>(null);
+  const [analystOpen, setAnalystOpen] = useState(true);
+  const [exportState, setExportState] = useState<ExportState>("idle");
+  const [about, setAbout] = useState(false);
+  const analyst = useAnalyst();
+
+  const region = REGIONS.find((r) => r.id === regionId);
+  const bbox: BBox = regionId === "custom" && customBBox ? customBBox : (region ?? REGIONS[REGIONS.length - 1]).bbox;
+  const regionName = regionId === "custom" ? `Custom AOI (${formatBBox(bbox)})` : region!.name;
+  const regionShort = regionId === "custom" ? "this area" : region!.short === "Full domain" ? "Bangladesh" : region!.short;
+  const analysis = useMemo(() => analyzeAoi(grid, bbox), [grid, bbox.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const selectedStat = selected ? analysis.months.find((m) => m.year === selected.year && m.month === selected.month) : undefined;
+
+  // Time-slider playback.
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => setYear((y) => (y >= grid.meta.lastYear ? grid.meta.firstYear : y + 1)), 1100);
+    return () => clearInterval(id);
+  }, [playing, grid.meta.firstYear, grid.meta.lastYear]);
+
+  const base = { bbox, regionName };
+  const explain = useCallback(
+    (m: MonthStat) => {
+      setAnalystOpen(true);
+      analyst.ask({ ...base, mode: "insight", focus: { year: m.year, month: m.month } });
+    },
+    [analyst, bbox.join(","), regionName], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const onSelect = (m: MonthStat) => {
+    if (m.missing) return;
+    setSelected({ year: m.year, month: m.month });
+    setYear(m.year);
+    setMonth(m.month);
+    setPlaying(false);
+    if (m.anomaly) explain(m);
+  };
+
+  const changeRegion = (id: string) => {
+    setRegionId(id);
+    setSelected(null);
+  };
+
+  const exportPdf = async () => {
+    let brief = [...analyst.messages].reverse().find((m) => m.kind === "brief" && !m.streaming && m.regionName === regionName && m.content.length > 200)?.content;
+    if (!brief) {
+      setAnalystOpen(true);
+      setExportState("drafting");
+      brief = await analyst.ask({ ...base, mode: "brief" }, "Generate Responder Early-Warning Brief.");
+    }
+    if (!brief) {
+      setExportState("idle");
+      return;
+    }
+    setExportState("rendering");
+    const { downloadBriefPdf } = await import("./lib/pdf"); // jsPDF is large; load on demand
+    downloadBriefPdf({ brief, regionName, analysis, meta: grid.meta });
+    setExportState("done");
+    setTimeout(() => setExportState("idle"), 2400);
+  };
+
+  return (
+    <div className="flex min-h-full flex-col lg:h-full">
+      <Header meta={grid.meta} analysis={analysis} harmonized={harmonized} onHarmonized={setHarmonized} onAbout={() => setAbout(true)} />
+
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-3 pb-3 lg:grid-cols-[minmax(0,58fr)_minmax(0,42fr)] lg:px-4 lg:pb-4">
+        <div className="h-[62vh] min-h-[460px] lg:h-auto">
+          <MapPanel
+            grid={grid}
+            points={points}
+            bbox={bbox}
+            regionId={regionId}
+            onRegion={changeRegion}
+            onCustomBBox={(b) => {
+              setCustomBBox(b);
+              setRegionId("custom");
+              setSelected(null);
+            }}
+            view={view}
+            onView={setView}
+            year={year}
+            onYear={(y) => {
+              setYear(y);
+              setPlaying(false);
+            }}
+            month={month}
+            onMonth={setMonth}
+            playing={playing}
+            onPlaying={setPlaying}
+          />
+        </div>
+
+        <div className="flex min-h-0 flex-col gap-3">
+          <motion.div layout className={`min-h-[380px] ${analystOpen ? "lg:min-h-0 lg:flex-[1.05]" : "lg:min-h-0 lg:flex-1"}`}>
+            <CalendarPanel analysis={analysis} meta={grid.meta} harmonized={harmonized} year={year} selected={selected} onSelect={onSelect} regionName={regionName} />
+          </motion.div>
+          <motion.div layout className={analystOpen ? "h-[480px] lg:h-auto lg:min-h-0 lg:flex-1" : "shrink-0"}>
+            <AnalystPanel
+              messages={analyst.messages}
+              busy={analyst.busy}
+              open={analystOpen}
+              onToggle={() => setAnalystOpen((o) => !o)}
+              onAsk={(q) => analyst.ask({ ...base, mode: "chat", question: q }, q)}
+              onBrief={() => analyst.ask({ ...base, mode: "brief" }, "Generate Responder Early-Warning Brief.")}
+              onExplain={explain}
+              onExport={exportPdf}
+              onClear={analyst.clear}
+              exportState={exportState}
+              regionShort={regionShort}
+              topAnomaly={analysis.anomalies[0]}
+              selectedMonth={selectedStat}
+              health={health}
+            />
+          </motion.div>
+        </div>
+      </main>
+
+      <AnimatePresence>{about && <AboutModal meta={grid.meta} k={analysis.k} onClose={() => setAbout(false)} />}</AnimatePresence>
+    </div>
+  );
+}
+
+function Splash({ message, loading }: { message: string; loading?: boolean }) {
+  return (
+    <div className="grid h-full place-items-center p-6 text-center">
+      <div>
+        <motion.div
+          className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-ember via-flame to-solar shadow-[0_0_40px_rgba(249,115,22,0.6)]"
+          animate={loading ? { scale: [1, 1.08, 1] } : {}}
+          transition={{ repeat: Infinity, duration: 1.4 }}
+        >
+          <Flame className="h-7 w-7 text-white" />
+        </motion.div>
+        <p className="text-sm text-slate-300">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+function AboutModal({ meta, k, onClose }: { meta: GridFile["meta"]; k: number; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <motion.div className="fixed inset-0 z-[2000] grid place-items-center bg-black/60 p-4 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label="About FireCal AI"
+        className="glass max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-ink-900/90 p-6 scroll-thin"
+        initial={{ y: 16, scale: 0.97 }}
+        animate={{ y: 0, scale: 1 }}
+        exit={{ y: 16, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-start justify-between">
+          <h2 className="text-lg font-bold">
+            How <span className="text-heat">FireCal</span> harmonizes the record
+          </h2>
+          <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-white" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {meta.source === "sample" && (
+          <p className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-100">
+            <strong>You are viewing synthetic demo data.</strong> Seasonal patterns follow known regional burning practices, but yearly values and anomalies are simulated. Load the real NASA FIRMS archive with <code className="font-mono">npm run data:fetch</code> + <code className="font-mono">npm run data:ingest</code>.
+          </p>
+        )}
+        <ol className="space-y-3 text-sm text-slate-300">
+          <li>
+            <strong className="text-white">1. Confidence filter.</strong> Low-confidence detections are dropped (MODIS &lt; 30%, VIIRS "low").
+          </li>
+          <li>
+            <strong className="text-white">2. Common-grid fire-days.</strong> Each detection is snapped to a {meta.fireDayGrid}° (~1 km) grid. We count unique cell × day pairs, so several 375 m VIIRS pixels on one fire count once.
+          </li>
+          <li>
+            <strong className="text-white">3. Overlap calibration.</strong> From {meta.viirsStartYear}, both sensors fly. The ratio of VIIRS to MODIS fire-days (k = {k} for the selected area) lifts the MODIS-only era ({meta.firstYear}–{meta.viirsStartYear - 1}) to VIIRS-equivalent units.
+          </li>
+          <li>
+            <strong className="text-white">4. Anomalies and trend.</strong> Each month is compared with the same month in the previous 10 years (z-score, % change, with an over-dispersed counting-noise floor). The long-term trend uses Mann-Kendall + Sen's slope.
+          </li>
+          <li>
+            <strong className="text-white">5. Confidence index (HCI).</strong> Combines detection confidence, MODIS/VIIRS agreement and sample size (0–100).
+          </li>
+        </ol>
+        <p className="mt-4 text-xs text-slate-500">
+          The AI analyst only receives these computed statistics, and the prompt tells it to cite them, not invent numbers. Record: {MONTHS_LONG[0]} {meta.firstYear} – {MONTHS_LONG[meta.lastMonth - 1]} {meta.lastYear}.
+        </p>
+      </motion.div>
+    </motion.div>
+  );
+}

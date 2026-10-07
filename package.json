@@ -1,0 +1,45 @@
+{
+  "name": "firecal-ai",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "FireCal AI — harmonized MODIS + VIIRS burning-activity calendar with an AI analyst (NASA Space Apps 2026).",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c yellow,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "tsc -p . && vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "typecheck": "tsc -p .",
+    "test": "tsx --test tests/*.test.ts",
+    "data:sample": "tsx pipeline/generate-sample.ts",
+    "data:ingest": "tsx pipeline/ingest-firms.ts",
+    "data:fetch": "tsx pipeline/fetch-firms.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "express": "^5.2.1",
+    "framer-motion": "^14.0.0",
+    "jspdf": "^4.2.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.52.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-leaflet": "^5.0.0",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/express": "^5.0.6",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.5",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3"
+  }
+}
