@@ -32,6 +32,12 @@ export interface GridFile {
   cells: [number, number][];
   /** Flat array, RECORD_WIDTH ints per record. */
   records: number[];
+  /** Fire regime from VIIRS: events (Global Fire Atlas style) and burn return intervals. Optional (older files lack it). */
+  regime?: {
+    fine: number[];
+    events: number[];
+    years: [number, number];
+  };
 }
 
 export const RECORD_FIELDS = [

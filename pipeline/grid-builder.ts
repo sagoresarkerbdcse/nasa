@@ -37,6 +37,8 @@ export class GridBuilder {
   private fx: number;
   private fy: number;
   private lastYM = 0;
+  /** VIIRS fire-days as [gx, gy, absoluteDay] triplets, for event and return-interval analysis. */
+  private viirsFD: number[] = [];
   private rand: () => number;
   count = 0;
 
@@ -74,6 +76,7 @@ export class GridBuilder {
       if (!set.has(fdKey)) {
         set.add(fdKey);
         rec[5 + d.sensor] += 1;
+        if (d.sensor === 1) this.viirsFD.push(gx, gy, Math.floor(Date.UTC(d.year, d.month - 1, d.day) / 86400000));
       }
     }
     if (ym > this.lastYM) this.lastYM = ym;
@@ -90,6 +93,110 @@ export class GridBuilder {
       const j = Math.floor(this.rand() * r.seen);
       if (j < this.o.pointsPerYear) r.pts[j] = pt;
     }
+  }
+
+  /**
+   * Fire regime from VIIRS fire-days (consistent 375 m sensor, complete years only):
+   *  - events: fire-days linked when they touch in space (8-neighbour, 0.01°) and
+   *    time (±1 day), following the Global Fire Atlas idea of tracking individual fires;
+   *  - burn return interval: years between burns of the same ~1 km cell.
+   */
+  private fireRegime(used: Map<number, number>): FireRegimeExtras {
+    const { bounds, cellSize, fireDayGrid, viirsStartYear } = this.o;
+    const fd = this.viirsFD;
+    const n = fd.length / 3;
+    const lastFull = this.lastYM % 12 === 11 ? this.o.firstYear + Math.floor(this.lastYM / 12) : this.o.firstYear + Math.floor(this.lastYM / 12) - 1;
+    const yearOf = (day: number) => new Date(day * 86400000).getUTCFullYear();
+    const cellOf = (gx: number, gy: number) => {
+      const raw = Math.floor((gy * fireDayGrid) / cellSize) * this.nx + Math.floor((gx * fireDayGrid) / cellSize);
+      return used.get(raw);
+    };
+
+    // Union-find over fire-days.
+    const parent = new Int32Array(n).map((_, i) => i);
+    const find = (i: number): number => {
+      while (parent[i] !== i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    };
+    const index = new Map<number, number>();
+    const key = (gx: number, gy: number, day: number) => (day * this.fy + gy) * this.fx + gx;
+    for (let i = 0; i < n; i++) index.set(key(fd[3 * i], fd[3 * i + 1], fd[3 * i + 2]), i);
+    for (let i = 0; i < n; i++) {
+      const gx = fd[3 * i];
+      const gy = fd[3 * i + 1];
+      const day = fd[3 * i + 2];
+      for (const dd of [-1, 0])
+        for (let dx = -1; dx <= 1; dx++)
+          for (let dy = -1; dy <= 1; dy++) {
+            if (dd === 0 && (dy < 0 || (dy === 0 && dx <= 0))) continue; // each same-day pair once
+            const j = index.get(key(gx + dx, gy + dy, day + dd));
+            if (j !== undefined) {
+              const a = find(i);
+              const b = find(j);
+              if (a !== b) parent[a] = b;
+            }
+          }
+    }
+    const comp = new Map<number, { cells: Set<number>; d0: number; d1: number; sx: number; sy: number; m: number }>();
+    for (let i = 0; i < n; i++) {
+      const r = find(i);
+      let c = comp.get(r);
+      if (!c) comp.set(r, (c = { cells: new Set(), d0: Infinity, d1: -Infinity, sx: 0, sy: 0, m: 0 }));
+      c.cells.add(fd[3 * i + 1] * this.fx + fd[3 * i]);
+      c.d0 = Math.min(c.d0, fd[3 * i + 2]);
+      c.d1 = Math.max(c.d1, fd[3 * i + 2]);
+      c.sx += fd[3 * i];
+      c.sy += fd[3 * i + 1];
+      c.m++;
+    }
+    const ev = new Map<string, number[]>();
+    for (const c of comp.values()) {
+      const y = yearOf(c.d0);
+      if (y < viirsStartYear || y > lastFull) continue;
+      const cell = cellOf(Math.round(c.sx / c.m), Math.round(c.sy / c.m));
+      if (cell === undefined) continue;
+      const k = `${cell}|${y}`;
+      const area = c.cells.size;
+      const e = ev.get(k) ?? [cell, y, 0, 0, 0, 0, 0];
+      e[2] += 1;
+      e[3] += area;
+      e[4] = Math.max(e[4], area);
+      e[5] += c.d1 - c.d0 + 1;
+      e[6] += area >= 10 ? 1 : 0;
+      ev.set(k, e);
+    }
+
+    // Return interval per ~1 km cell (years burned, complete VIIRS years).
+    const yearsBurned = new Map<number, Set<number>>();
+    for (let i = 0; i < n; i++) {
+      const y = yearOf(fd[3 * i + 2]);
+      if (y < viirsStartYear || y > lastFull) continue;
+      const fine = fd[3 * i + 1] * this.fx + fd[3 * i];
+      let set = yearsBurned.get(fine);
+      if (!set) yearsBurned.set(fine, (set = new Set()));
+      set.add(y);
+    }
+    const fineAgg = new Map<number, number[]>();
+    for (const [fine, ys] of yearsBurned) {
+      const cell = cellOf(fine % this.fx, Math.floor(fine / this.fx));
+      if (cell === undefined) continue;
+      const a = fineAgg.get(cell) ?? [cell, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      a[1] += 1;
+      if (ys.size >= 2) {
+        a[2] += 1;
+        const sorted = [...ys].sort((x, y) => x - y);
+        for (let t = 1; t < sorted.length; t++) {
+          const gap = sorted[t] - sorted[t - 1];
+          a[3 + INTERVAL_BINS.findIndex((b) => gap <= b)] += 1;
+        }
+      }
+      fineAgg.set(cell, a);
+    }
+    void bounds;
+    return { fine: [...fineAgg.values()].flat(), events: [...ev.values()].flat(), years: [viirsStartYear, lastFull] };
   }
 
   write(gridPath: string, pointsPath: string, source: GridFile["meta"]["source"], notes: string) {
@@ -127,6 +234,7 @@ export class GridBuilder {
       cells,
       records,
     };
+    grid.regime = this.fireRegime(used);
     const points: PointsFile = { byYear: {} };
     for (const [y, r] of [...this.reservoirs.entries()].sort((a, b) => a[0] - b[0])) points.byYear[y] = r.pts;
     mkdirSync(dirname(gridPath), { recursive: true });
@@ -134,6 +242,16 @@ export class GridBuilder {
     writeFileSync(pointsPath, JSON.stringify(points));
     return { cells: cells.length, records: records.length / RECORD_WIDTH, lastYear: grid.meta.lastYear, lastMonth: grid.meta.lastMonth };
   }
+}
+
+export const INTERVAL_BINS = [1, 2, 3, 4, 5, 8, Infinity]; // years: 1,2,3,4,5,6-8,9+
+
+export interface FireRegimeExtras {
+  /** per 0.25° cell: [cell, burnedFineCells, reburnedFineCells, ...interval histogram (7 bins)] */
+  fine: number[];
+  /** per 0.25° cell × year (by event centroid): [cell, year, events, sumAreaCells, maxAreaCells, sumDurationDays, bigEvents(≥10 cells)] */
+  events: number[];
+  years: [number, number];
 }
 
 export function mulberry32(seed: number) {
