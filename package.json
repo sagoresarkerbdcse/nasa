@@ -18,7 +18,8 @@
     "data:fetch-country": "tsx pipeline/fetch-firms-country.ts",
     "data:live": "tsx pipeline/fetch-live.ts",
     "data:global-year": "tsx pipeline/global-year.ts",
-    "data:global-merge": "tsx pipeline/global-merge.ts"
+    "data:global-merge": "tsx pipeline/global-merge.ts",
+    "data:oni": "tsx pipeline/fetch-oni.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

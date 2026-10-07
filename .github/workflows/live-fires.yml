@@ -26,16 +26,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run data:live
+      - name: Climate index (NOAA ONI)
+        continue-on-error: true
+        run: npm run data:oni
       - name: Commit
         run: |
           git config user.name "firecal-data-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Re-base the freshly built data onto the latest main without merging data files.
-          rm -rf /tmp/fc-new && mkdir -p /tmp/fc-new && cp -r public/data/live.json /tmp/fc-new/
+          rm -rf /tmp/fc-new && mkdir -p /tmp/fc-new && cp public/data/live.json /tmp/fc-new/ && (cp public/data/oni.json /tmp/fc-new/ || true)
           git fetch origin main
           git reset --hard origin/main
-          cp -r /tmp/fc-new/$(basename public/data/live.json) $(dirname public/data/live.json)/
-          git add public/data/live.json
+          cp /tmp/fc-new/*.json public/data/
+          git add public/data/live.json public/data/oni.json 2>/dev/null || git add public/data/live.json
           if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
-          git commit -m "data: refresh live.json"
+          git commit -m "data: refresh live FIRMS fires and ONI"
           git push origin HEAD:main
