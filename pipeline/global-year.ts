@@ -47,7 +47,8 @@ const result: YearOutput = { year, countries: {}, bboxes: {}, cells: {}, sources
 const countryCells = new Map<string, Map<number, number>>(); // country → 1° cell → fire-days
 
 async function download(url: string, dest: string) {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // FIRMS refuses connections when many runners download at once: back off for up to ~8 minutes.
+  for (let attempt = 0; attempt < 7; attempt++) {
     try {
       const res = await fetch(url);
       if (res.status === 404) return false;
@@ -56,7 +57,7 @@ async function download(url: string, dest: string) {
       return true;
     } catch (e) {
       console.warn(`  retry ${attempt + 1}: ${(e as Error).message}`);
-      await new Promise((r) => setTimeout(r, 4000 * 2 ** attempt));
+      await new Promise((r) => setTimeout(r, Math.min(120000, 4000 * 2 ** attempt) + Math.random() * 5000));
     }
   }
   throw new Error(`download failed: ${url}`);
