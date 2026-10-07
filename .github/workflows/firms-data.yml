@@ -39,6 +39,13 @@ jobs:
           key: firms-raw-${{ github.run_id }}
           restore-keys: firms-raw-
 
+      - name: Probe FIRMS connectivity
+        continue-on-error: true
+        run: |
+          curl -sS -o /dev/null -w "country archive: %{http_code} %{remote_ip}\n" https://firms.modaps.eosdis.nasa.gov/data/country/modis/2023/modis_2023_Bangladesh.csv || true
+          curl -sS -o /dev/null -w "firms home: %{http_code}\n" https://firms.modaps.eosdis.nasa.gov/ || true
+          curl -sS -4 -o /dev/null -w "ipv4: %{http_code}\n" https://firms.modaps.eosdis.nasa.gov/ || true
+
       - name: Download FIRMS country yearly archives (no key needed)
         id: archive
         run: npm run data:fetch-country -- ${{ inputs.from_year || '2001' }}

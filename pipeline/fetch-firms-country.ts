@@ -97,7 +97,8 @@ async function run(job: Job) {
       return;
     } catch (err) {
       const wait = 3000 * 2 ** attempt;
-      console.warn(`  ! ${job.sensor} ${job.year} ${job.country}: ${(err as Error).message}; retry in ${wait / 1000}s`);
+      const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+      console.warn(`  ! ${job.sensor} ${job.year} ${job.country}: ${(err as Error).message}${cause ? ` (${cause.code ?? ""} ${cause.message ?? ""})` : ""}; retry in ${wait / 1000}s`);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
