@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: firms-data
+  group: data-commit
   cancel-in-progress: false
 
 jobs:
@@ -69,4 +69,5 @@ jobs:
           git add public/data
           if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
           git commit -m "data: refresh NASA FIRMS MODIS + VIIRS record"
+          git pull --rebase origin main
           git push

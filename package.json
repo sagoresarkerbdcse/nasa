@@ -15,7 +15,8 @@
     "data:sample": "tsx pipeline/generate-sample.ts",
     "data:ingest": "tsx pipeline/ingest-firms.ts",
     "data:fetch": "tsx pipeline/fetch-firms.ts",
-    "data:fetch-country": "tsx pipeline/fetch-firms-country.ts"
+    "data:fetch-country": "tsx pipeline/fetch-firms-country.ts",
+    "data:live": "tsx pipeline/fetch-live.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

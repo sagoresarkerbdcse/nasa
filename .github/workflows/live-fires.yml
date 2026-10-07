@@ -1,0 +1,37 @@
+name: Refresh live FIRMS fires
+
+# Snapshots the last 7 days of NASA FIRMS active fires (VIIRS S-NPP,
+# NOAA-20, NOAA-21, MODIS) for the study area into public/data/live.json.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 2,14 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-commit
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run data:live
+      - name: Commit
+        run: |
+          git config user.name "firecal-data-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/live.json
+          if git diff --cached --quiet; then echo "No change."; exit 0; fi
+          git commit -m "data: refresh live FIRMS fires"
+          git pull --rebase origin main
+          git push

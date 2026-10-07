@@ -110,3 +110,12 @@ export interface Region {
   bbox: BBox;
   blurb: string;
 }
+
+/** Last-7-days FIRMS active fires (public/data/live.json and /api/live). */
+export interface LiveFile {
+  generatedAt: string;
+  window: "7d";
+  sources: { key: string; label: string; ok: boolean; count: number; error?: string }[];
+  /** [lon, lat, sensor(0 MODIS,1 SNPP,2 NOAA-20,3 NOAA-21), conf(0-2), frpMW, "YYYY-MM-DD", "HHMM" UTC, night(0/1)] */
+  detections: [number, number, number, number, number, string, string, number][];
+}
