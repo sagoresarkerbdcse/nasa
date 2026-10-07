@@ -3,7 +3,7 @@ import { ChevronDown, FileDown, Loader2, RotateCcw, SendHorizontal, Sparkles, Wa
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../lib/markdown";
 import { MONTHS_LONG } from "../lib/regions";
-import type { AnalystMessage } from "../lib/useAnalyst";
+import type { AnalystBudget, AnalystMessage } from "../lib/useAnalyst";
 import type { MonthStat } from "../lib/types";
 
 export type ExportState = "idle" | "drafting" | "rendering" | "done";
@@ -22,8 +22,28 @@ interface Props {
   regionShort: string;
   topAnomaly: MonthStat | undefined;
   selectedMonth: MonthStat | undefined;
-  health: { llm: boolean; model: string | null } | null;
+  health: Health | null;
+  budget: AnalystBudget | null;
 }
+
+export interface Health {
+  llm: boolean;
+  provider?: "openrouter" | "anthropic" | "offline";
+  model: string | null;
+  budget?: AnalystBudget | null;
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  get_area_overview: "Area overview",
+  get_monthly_series: "Monthly series",
+  rank_months: "Rank months",
+  compare_periods: "Compare periods",
+  get_hotspot_trends: "Hot-spot analysis",
+  get_season_timing: "Season timing",
+  get_outlook: "Outlook model",
+  get_live_fires: "Live FIRMS feed",
+  update_dashboard: "Updated your map",
+};
 
 export function AnalystAvatar({ active, size = 36 }: { active: boolean; size?: number }) {
   return (
@@ -52,11 +72,14 @@ export function AnalystPanel(p: Props) {
   }, [p.messages.length, last?.content.length]);
 
   const chips = [
-    `When is peak burning season in ${p.regionShort}?`,
-    p.topAnomaly ? `Explain the ${MONTHS_LONG[p.topAnomaly.month - 1]} ${p.topAnomaly.year} anomaly in ${p.regionShort}.` : `Is burning in ${p.regionShort} increasing over time?`,
+    `Show live fires in ${p.regionShort} right now`,
+    `Where are the persistent hot spots in ${p.regionShort}?`,
+    `Is the fire season in ${p.regionShort} starting earlier?`,
+    `What's the outlook for the next 3 months?`,
+    p.topAnomaly ? `Explain the ${MONTHS_LONG[p.topAnomaly.month - 1]} ${p.topAnomaly.year} anomaly in ${p.regionShort}` : `Has burning in ${p.regionShort} declined?`,
     "Generate Responder Early-Warning Brief.",
-    "How do you harmonize MODIS and VIIRS?",
   ];
+  const budget = p.budget ?? p.health?.budget ?? null;
 
   const submit = (q: string) => {
     const text = q.trim();
@@ -76,7 +99,13 @@ export function AnalystPanel(p: Props) {
         <div className="min-w-0 flex-1">
           <h2 className="eyebrow !text-slate-200">FireCal Analyst</h2>
           <p className="truncate font-mono text-[10px] text-slate-500">
-            {p.health === null ? "connecting…" : p.health.llm ? `Claude · ${p.health.model} · grounded on harmonized data` : "offline analyst · set ANTHROPIC_API_KEY for Claude"}
+            {p.health === null
+              ? "connecting…"
+              : p.health.provider === "openrouter"
+                ? `${p.health.model} via OpenRouter${budget ? ` · $${budget.spentUsd.toFixed(3)} of $${budget.budgetUsd} used` : ""}`
+                : p.health.llm
+                  ? `Claude · ${p.health.model} · tool-using agent`
+                  : "offline analyst (free) · set OPENROUTER_API_KEY for AI"}
           </p>
         </div>
         <motion.button
@@ -192,6 +221,22 @@ function MessageBubble({ m }: { m: AnalystMessage }) {
             {m.regionName && <span className="ml-auto truncate font-normal normal-case tracking-normal text-slate-500">{m.regionName}</span>}
           </div>
         )}
+        {m.tools && m.tools.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1" aria-label="Analysis steps">
+            {m.tools.map((t, i) => (
+              <motion.span
+                key={i}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className={`inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9.5px] ${t.name === "update_dashboard" ? "border-cyan/40 bg-cyan/10 text-cyan" : "border-white/10 bg-white/[0.04] text-slate-300"}`}
+                title={JSON.stringify(t.input)}
+              >
+                <span className="text-signal">▸</span> {TOOL_LABELS[t.name] ?? t.name}
+                {typeof t.input.region === "string" && <span className="text-slate-500">· {t.input.region}</span>}
+              </motion.span>
+            ))}
+          </div>
+        )}
         {m.content ? (
           <div className="text-[13px] leading-relaxed text-slate-200">
             <Markdown text={m.content} streaming={m.streaming} />
@@ -206,7 +251,11 @@ function MessageBubble({ m }: { m: AnalystMessage }) {
             Analyzing harmonized record…
           </div>
         )}
-        {!m.streaming && m.source === "offline" && <div className="mt-1 font-mono text-[9px] text-slate-500">offline analyst</div>}
+        {!m.streaming && (m.source || m.costUsd !== undefined) && (
+          <div className="mt-1 font-mono text-[9px] text-slate-500">
+            {m.source === "offline" ? "offline analyst · $0" : m.source === "openrouter" ? `AI analyst · $${(m.costUsd ?? 0).toFixed(4)}` : "AI analyst"}
+          </div>
+        )}
       </div>
     </motion.div>
   );

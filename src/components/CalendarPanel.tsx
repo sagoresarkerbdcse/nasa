@@ -1,10 +1,19 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, LineChart as LineIcon, Zap } from "lucide-react";
+import { CalendarDays, Flame, LineChart as LineIcon, Radio, Telescope, Zap } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { OutlookMonth } from "../lib/analytics";
 import { fmt, heat, powScale } from "../lib/color";
 import { MONTHS } from "../lib/regions";
-import type { AoiAnalysis, GridFile, MonthStat } from "../lib/types";
+import type { AoiAnalysis, BBox, GridFile, InsightTab, LiveFile, MonthStat } from "../lib/types";
+import { HotspotsTab, LiveTab, OutlookTab, TrendsTab } from "./InsightTabs";
+
+const TABS: { id: InsightTab; label: string; Icon: typeof CalendarDays }[] = [
+  { id: "calendar", label: "Calendar", Icon: CalendarDays },
+  { id: "trends", label: "Trends", Icon: LineIcon },
+  { id: "hotspots", label: "Hot spots", Icon: Flame },
+  { id: "outlook", label: "Outlook", Icon: Telescope },
+  { id: "live", label: "Live", Icon: Radio },
+];
 
 interface Props {
   analysis: AoiAnalysis;
@@ -14,10 +23,20 @@ interface Props {
   selected: { year: number; month: number } | null;
   onSelect: (m: MonthStat) => void;
   regionName: string;
+  tab: InsightTab;
+  onTab: (t: InsightTab) => void;
+  grid: GridFile;
+  bbox: BBox;
+  live: LiveFile | null;
+  liveOrigin: string | null;
+  outlook: OutlookMonth[];
+  outlookTarget: number;
+  onOutlookTarget: (i: number) => void;
+  onFocus: (b: BBox) => void;
 }
 
-export function CalendarPanel({ analysis, meta, harmonized, year, selected, onSelect, regionName }: Props) {
-  const [tab, setTab] = useState<"calendar" | "annual">("calendar");
+export function CalendarPanel(p: Props) {
+  const { analysis, meta, harmonized, year, selected, onSelect, regionName, tab, onTab: setTab } = p;
   const [hover, setHover] = useState<{ m: MonthStat; x: number; y: number } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -36,21 +55,16 @@ export function CalendarPanel({ analysis, meta, harmonized, year, selected, onSe
       <header className="panel-head flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">02</span>
         <div className="mr-auto min-w-0">
-          <h2 className="eyebrow !text-slate-200">Burning activity calendar</h2>
+          <h2 className="eyebrow !text-slate-200">Insights</h2>
           <p className="truncate text-[11.5px] text-slate-400">
             {regionName} · {harmonized ? "harmonized fire-days, VIIRS-equivalent" : `raw detections: MODIS until ${meta.viirsStartYear - 1}, then VIIRS`}
           </p>
         </div>
-        <div className="flex rounded-[4px] border border-white/10 bg-black/30 p-0.5 font-mono text-[10px] uppercase tracking-wider">
-          {(
-            [
-              ["calendar", "Matrix", CalendarDays],
-              ["annual", "Annual", LineIcon],
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button key={id} onClick={() => setTab(id)} className={`relative flex items-center gap-1.5 rounded-[3px] px-2.5 py-1 ${tab === id ? "text-white" : "text-slate-400 hover:text-slate-200"}`}>
+        <div className="flex max-w-full overflow-x-auto rounded-[4px] border border-white/10 bg-black/30 p-0.5 font-mono text-[10px] uppercase tracking-wider scroll-thin" role="tablist">
+          {TABS.map(({ id, label, Icon }) => (
+            <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`relative flex shrink-0 items-center gap-1.5 rounded-[3px] px-2 py-1 ${tab === id ? "text-white" : "text-slate-400 hover:text-slate-200"}`}>
               {tab === id && <motion.span layoutId="cal-tab" className="absolute inset-0 rounded-[3px] bg-nasa-blue" />}
-              <Icon className="relative h-3 w-3" />
+              <Icon className={`relative h-3 w-3 ${id === "live" && tab !== "live" ? "text-nasa-red" : ""}`} />
               <span className="relative">{label}</span>
             </button>
           ))}
@@ -58,7 +72,7 @@ export function CalendarPanel({ analysis, meta, harmonized, year, selected, onSe
       </header>
 
       {/* Anomaly pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.05] px-4 py-2 scroll-thin">
+      <div className={`${tab === "calendar" ? "flex" : "hidden"} items-center gap-1.5 overflow-x-auto border-b border-white/[0.05] px-4 py-2 scroll-thin`}>
         <span className="eyebrow shrink-0 pr-1 !text-[9.5px]">Anomalies</span>
         {analysis.anomalies.length === 0 && <span className="font-mono text-[10.5px] text-slate-500">None detected for this area</span>}
         {analysis.anomalies.slice(0, 6).map((m) => {
@@ -144,8 +158,11 @@ export function CalendarPanel({ analysis, meta, harmonized, year, selected, onSe
               </div>
             </motion.div>
           ) : (
-            <motion.div key="annual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full min-h-[260px]">
-              <AnnualChart analysis={analysis} meta={meta} harmonized={harmonized} />
+            <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="pt-3">
+              {tab === "trends" && <TrendsTab analysis={analysis} meta={meta} harmonized={harmonized} />}
+              {tab === "hotspots" && <HotspotsTab grid={p.grid} bbox={p.bbox} onFocus={p.onFocus} />}
+              {tab === "outlook" && <OutlookTab analysis={analysis} outlook={p.outlook} target={p.outlookTarget} onTarget={p.onOutlookTarget} />}
+              {tab === "live" && <LiveTab live={p.live} origin={p.liveOrigin} analysis={analysis} bbox={p.bbox} onFocus={p.onFocus} />}
             </motion.div>
           )}
         </AnimatePresence>
@@ -200,56 +217,4 @@ function CellPopover({ m }: { m: MonthStat }) {
       </div>
     </>
   );
-}
-
-function AnnualChart({ analysis, meta, harmonized }: { analysis: AoiAnalysis; meta: GridFile["meta"]; harmonized: boolean }) {
-  const data = analysis.annual.map((a) => ({ ...a, harmonized: Math.round(a.harmonized), partial: a.year === meta.lastYear && meta.lastMonth < 12 }));
-  return (
-    <div className="flex h-full flex-col">
-      <div className="mb-1 flex flex-wrap gap-3 text-[10.5px]">
-        <span className={`flex items-center gap-1.5 ${harmonized ? "text-orange-300" : "text-slate-500"}`}>
-          <span className="h-2 w-3 rounded-sm bg-gradient-to-r from-ember to-solar" /> Harmonized fire-days
-        </span>
-        <span className={`flex items-center gap-1.5 ${!harmonized ? "text-blue-300" : "text-slate-500"}`}>
-          <span className="h-0.5 w-3 border-t-2 border-dashed border-signal" /> Naive raw counts
-        </span>
-        <span className="ml-auto font-mono text-slate-400">
-          Trend: {analysis.trend.direction} (p={analysis.trend.pValue})
-        </span>
-      </div>
-      <div className="min-h-[220px] flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 10, right: 8, left: -12, bottom: 0 }}>
-            <defs>
-              <linearGradient id="harmFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#ff7a1a" stopOpacity={0.55} />
-                <stop offset="100%" stopColor="#ef4444" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-            <XAxis dataKey="year" tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "DM Mono" }} tickLine={false} axisLine={false} interval={4} />
-            <YAxis tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "DM Mono" }} tickLine={false} axisLine={false} tickFormatter={(v) => fmt(v)} />
-            <Tooltip
-              contentStyle={{ background: "rgba(8,11,16,0.97)", border: "1px solid rgba(249,115,22,0.3)", borderRadius: 4, fontSize: 11, fontFamily: "DM Mono" }}
-              labelStyle={{ color: "#fff", fontWeight: 700 }}
-            />
-            <ReferenceLine x={meta.viirsStartYear} stroke="#4d8eff" strokeDasharray="3 3" label={{ value: "VIIRS starts", fill: "#4d8eff", fontSize: 9, position: "insideTopLeft" }} />
-            <Area animationDuration={500} type="monotone" dataKey="harmonized" name="Harmonized" stroke="#ff7a1a" strokeWidth={harmonized ? 2.5 : 1.5} fill="url(#harmFill)" fillOpacity={harmonized ? 1 : 0.35} />
-            <Line animationDuration={500} type="monotone" dataKey="naive" name="Naive raw" stroke="#4d8eff" strokeDasharray="5 4" strokeWidth={harmonized ? 1.2 : 2.2} dot={false} strokeOpacity={harmonized ? 0.55 : 1} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      <p className="mt-1 text-[10.5px] leading-snug text-slate-400">
-        The dashed line jumps about {rawRatio(analysis, meta.viirsStartYear)}× when VIIRS starts in {meta.viirsStartYear}. That jump comes from the sensor, not from more fire. After harmonization (k = {analysis.k}), all {meta.lastYear - meta.firstYear + 1} years are comparable.
-      </p>
-    </div>
-  );
-}
-
-/** VIIRS raw / MODIS raw over the years both sensors fly. */
-function rawRatio(a: AoiAnalysis, from: number) {
-  const ov = a.annual.filter((y) => y.year >= from);
-  const m = ov.reduce((s, y) => s + y.modisRaw, 0);
-  const v = ov.reduce((s, y) => s + y.viirsRaw, 0);
-  return m ? Math.round((v / m) * 10) / 10 : "n/a";
 }

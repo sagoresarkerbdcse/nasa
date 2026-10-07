@@ -19,7 +19,7 @@ export interface Grounding {
   text: string;
 }
 
-export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string): Grounding {
+export function buildGrounding(grid: GridFile, bbox: BBox, regionName: string, opts: { table?: boolean } = {}): Grounding {
   const analysis = analyzeAoi(grid, bbox);
   const { lastYear, lastMonth, source, firstYear, viirsStartYear } = grid.meta;
 
@@ -61,12 +61,11 @@ TREND (Mann-Kendall on annual harmonized totals, complete years): ${a.trend.dire
 CLIMATOLOGY (mean harmonized fire-days per month, share of annual): ${a.climatology.map((c) => `${MONTHS[c.month - 1]} ${c.mean} (${Math.round(c.share * 100)}%)`).join("; ")}
 PEAK MONTHS: ${a.peakMonths.map((m) => MONTHS[m - 1]).join(", ")}
 ANNUAL HARMONIZED: ${a.annual.map((y) => `${y.year}:${Math.round(y.harmonized)}`).join(" ")}${lastMonth < 12 ? ` (${lastYear} partial)` : ""}
-FLAGGED ANOMALIES (vs same month, previous 10 yrs): ${a.anomalies.slice(0, 15).map((m) => `${m.year}-${String(m.month).padStart(2, "0")} ${m.anomaly} (${m.harmonized} vs baseline ${m.baseline}, ${m.pctVsBaseline! >= 0 ? "+" : ""}${m.pctVsBaseline}%, z=${m.z}, HCI ${m.hci})`).join("; ") || "none"}
+FLAGGED ANOMALIES (vs same month, previous 10 yrs): ${a.anomalies.slice(0, opts.table === false ? 6 : 15).map((m) => `${m.year}-${String(m.month).padStart(2, "0")} ${m.anomaly} (${m.harmonized} vs baseline ${m.baseline}, ${m.pctVsBaseline! >= 0 ? "+" : ""}${m.pctVsBaseline}%, z=${m.z}, HCI ${m.hci})`).join("; ") || "none"}
 TODAY: ${now.toISOString().slice(0, 10)}${lastYear < now.getUTCFullYear() - 1 ? ` (the archive ends ${lastYear}-${String(lastMonth).padStart(2, "0")}; say so when discussing recent conditions)` : ""}
 OUTLOOK MONTHS (next two calendar months from today): ${outlookMonths.map((o) => `${MONTHS[o.month - 1]} ${o.year} — climatology ${a.climatology[o.month - 1].mean} fire-days`).join("; ")}
 RECURRING HOT CELLS FOR OUTLOOK MONTHS (avg VIIRS fire-days/yr, last 5 yrs): ${hotCells.map((h) => `${h.lat.toFixed(2)}N ${h.lon.toFixed(2)}E: ${h.fireDays}`).join("; ") || "none"}
-MONTHLY TABLE (month,harmonized,naive,modis_raw,viirs_raw,hci,z,pct_vs_10yr,anomaly):
-${monthly}
+${opts.table === false ? "MONTHLY DETAIL: use the get_monthly_series / rank_months tools." : `MONTHLY TABLE (month,harmonized,naive,modis_raw,viirs_raw,hci,z,pct_vs_10yr,anomaly):\n${monthly}`}
 </fire_data>`;
 
   return { analysis, regionName, outlookMonths, hotCells, text };

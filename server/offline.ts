@@ -1,97 +1,153 @@
 /**
- * Rule-based analyst used when no Anthropic credentials are configured. It
- * answers the common questions straight from the grounding numbers so the demo
- * still works offline. It's deliberately plainer than the Claude analyst.
+ * Offline analyst (no Anthropic credentials). A small intent router that calls
+ * the same tools as the Claude agent, moves the dashboard, and writes plain
+ * answers from the tool results, so the demo works end to end without a key.
  */
-import { MONTHS_LONG } from "../src/lib/regions";
+import { analyzeAoi } from "../src/lib/harmonize";
+import { MONTHS_LONG, REGIONS } from "../src/lib/regions";
 import type { MonthStat } from "../src/lib/types";
-import type { Focus, Grounding } from "./context";
+import { buildGrounding, type Focus, type Grounding } from "./context";
+import { runTool, type ToolContext } from "./tools";
 
 const mName = (m: number) => MONTHS_LONG[m - 1];
 const ym = (m: { year: number; month: number }) => `${mName(m.month)} ${m.year}`;
 const pct = (share: number) => (share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`);
-const signed = (v: number | null) => (v === null ? "n/a" : `${v >= 0 ? "+" : ""}${v}%`);
+const signed = (v: number | null | undefined) => (v === null || v === undefined ? "n/a" : `${v >= 0 ? "+" : ""}${v}%`);
+const ymLabel = (s: string) => {
+  const [y, m] = s.split("-").map(Number);
+  return `${mName(m)} ${y}`;
+};
 
-export function offlineAnswer(g: Grounding, mode: "chat" | "insight" | "brief", question: string, focus?: Focus): string {
-  if (mode === "brief") return brief(g);
-  if (mode === "insight" && focus) return insight(g, focus);
-  const q = question.toLowerCase();
-  const year = Number(q.match(/\b(20\d\d)\b/)?.[1]);
-  const monthIdx = MONTHS_LONG.findIndex((m) => q.includes(m.toLowerCase()) || q.includes(m.slice(0, 3).toLowerCase() + " "));
-  if (/brief|warning|responder/.test(q)) return brief(g);
-  if (/anomal|explain|unusual|spike|why/.test(q)) {
-    const a = g.analysis;
-    let target: MonthStat | undefined;
-    if (year && monthIdx >= 0) target = a.months.find((m) => m.year === year && m.month === monthIdx + 1);
-    else if (year) target = a.anomalies.find((m) => m.year === year) ?? [...a.months].filter((m) => m.year === year).sort((x, y) => (y.z ?? 0) - (x.z ?? 0))[0];
-    else target = a.anomalies[0];
-    if (target) return insight(g, target);
+interface Args {
+  grounding: Grounding;
+  mode: "chat" | "insight" | "brief";
+  question: string;
+  focus?: Focus;
+  ctx: ToolContext;
+  send: (d: object) => void;
+  isClosed: () => boolean;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export async function offlineAgent({ grounding, mode, question, focus, ctx, send, isClosed }: Args) {
+  const call = async (name: string, input: Record<string, unknown> = {}): Promise<any> => {
+    send({ type: "tool", name, input });
+    return runTool(name, input, ctx);
+  };
+  let text: string;
+
+  if (mode === "insight" && focus) text = insight(grounding, focus);
+  else if (mode === "brief" || /brief|warning|responder/i.test(question)) text = await brief(grounding, call);
+  else {
+    const q = question.toLowerCase();
+    const region = REGIONS.find((r) => q.includes(r.short.toLowerCase()) || q.includes(r.name.toLowerCase()) || (r.id === "cht" && /chittagong|hill tracts/.test(q)));
+    const area: Record<string, unknown> = region ? { region: region.id } : {};
+    const g = region ? buildGrounding(ctx.grid, region.bbox, region.name) : grounding;
+    const year = Number(q.match(/\b(20\d\d)\b/)?.[1]) || undefined;
+    const monthIdx = MONTHS_LONG.findIndex((m) => new RegExp(`\\b(${m.toLowerCase()}|${m.slice(0, 3).toLowerCase()})\\b`).test(q));
+    const month = monthIdx >= 0 ? monthIdx + 1 : undefined;
+
+    if (/\blive\b|right now|today|this week|last 7|currently|active now/.test(q)) {
+      const r = await call("get_live_fires", area);
+      await call("update_dashboard", { ...area, layer: "live", tab: "live" });
+      text = live(r);
+    } else if (/forecast|outlook|next month|coming|predict|expect|upcoming/.test(q)) {
+      const r = await call("get_outlook", { ...area, months: 3 });
+      await call("update_dashboard", { ...area, layer: "outlook", tab: "outlook" });
+      text = outlookText(r);
+    } else if (/hot ?spot|where|location|persistent|intensif|cluster/.test(q)) {
+      const r = await call("get_hotspot_trends", area);
+      await call("update_dashboard", { ...area, layer: "hotspots", tab: "hotspots" });
+      text = hotspots(r);
+    } else if (/onset|earlier|later|season (start|length)|timing|shift|longer|shorter/.test(q)) {
+      const r = await call("get_season_timing", area);
+      await call("update_dashboard", { ...area, tab: "trends" });
+      text = season(r);
+    } else if (/worst|highest|biggest|most|record|lowest|least|quietest/.test(q)) {
+      const r = await call("rank_months", { ...area, by: /anomal|unusual/.test(q) ? "anomaly" : "fire_days", order: /lowest|least|quietest/.test(q) ? "lowest" : "highest", limit: 5 });
+      const top = r.rows[0];
+      if (top) {
+        const [y, m] = top.month.split("-").map(Number);
+        await call("update_dashboard", { ...area, year: y, month: m, layer: "activity", tab: "calendar" });
+      }
+      text = rank(r);
+    } else if (/compare|versus|\bvs\b|declin|increas|decreas|trend|changed|over time/.test(q)) {
+      const a = analyzeAoi(ctx.grid, g.analysis.bbox);
+      const years = a.annual.filter((x) => x.year < ctx.grid.meta.lastYear || ctx.grid.meta.lastMonth === 12).map((x) => x.year);
+      const r = await call("compare_periods", { ...area, period_a: [years[0], years[5]], period_b: [years[years.length - 6], years[years.length - 1]] });
+      await call("update_dashboard", { ...area, tab: "trends" });
+      text = compare(r, g);
+    } else if (/anomal|explain|unusual|spike|why/.test(q) || (year && month)) {
+      const a = g.analysis;
+      let target: MonthStat | undefined;
+      if (year && month) target = a.months.find((m) => m.year === year && m.month === month);
+      else if (year) target = a.anomalies.find((m) => m.year === year) ?? a.months.filter((m) => m.year === year).sort((x, y) => (y.z ?? 0) - (x.z ?? 0))[0];
+      else target = a.anomalies[0];
+      if (target) await call("update_dashboard", { ...area, year: target.year, month: target.month, layer: "anomaly", tab: "calendar" });
+      text = target ? insight(g, target) : overview(g);
+    } else if (/harmon|modis|viirs|sensor|calibrat|method|how do you/.test(q)) {
+      text = method(g);
+    } else if (/peak|season|when/.test(q)) {
+      await call("update_dashboard", { ...area, tab: "trends" });
+      text = peak(g);
+    } else {
+      await call("get_area_overview", area);
+      if (region || year) await call("update_dashboard", { ...area, ...(year ? { year } : {}) });
+      text = overview(g);
+    }
   }
-  if (/trend|increas|decreas|changing|over time/.test(q)) return trend(g);
-  if (/harmon|modis|viirs|sensor|calibrat|method/.test(q)) return method(g);
-  if (/peak|season|when|month/.test(q)) return peak(g);
-  return overview(g);
+
+  const parts = text.match(/\S+\s*/g) ?? [];
+  for (let i = 0; i < parts.length; i += 3) {
+    if (isClosed()) return;
+    send({ type: "delta", text: parts.slice(i, i + 3).join("") });
+    await new Promise((r) => setTimeout(r, 14));
+  }
+}
+
+function trendLine(g: Grounding) {
+  const t = g.analysis.trend;
+  return t.significant
+    ? `${t.direction} by about **${Math.abs(t.senSlope)} fire-days per year** (Mann-Kendall p = ${t.pValue})`
+    : `no statistically significant trend (Mann-Kendall p = ${t.pValue}, Sen's slope ${t.senSlope}/yr)`;
 }
 
 function peak(g: Grounding) {
   const a = g.analysis;
   const [p1, p2, p3] = a.peakMonths;
   const c = (m: number) => a.climatology[m - 1];
-  const top3 = Math.round((c(p1).share + c(p2).share + c(p3).share) * 100);
   return `**Peak burning season in ${g.regionName}: ${mName(p1)}–${mName(p2)}**
 
-Across the harmonized record, **${mName(p1)}** averages **${c(p1).mean} fire-days**, followed by ${mName(p2)} (${c(p2).mean}) and ${mName(p3)} (${c(p3).mean}). Together these three months hold **${top3}%** of annual burning activity.
+**${mName(p1)}** averages **${c(p1).mean} fire-days**, followed by ${mName(p2)} (${c(p2).mean}) and ${mName(p3)} (${c(p3).mean}). These three months hold **${Math.round((c(p1).share + c(p2).share + c(p3).share) * 100)}%** of the year's burning.
 
 - Quietest months: ${[...a.climatology].sort((x, y) => x.mean - y.mean).slice(0, 3).map((x) => mName(x.month)).join(", ")}
-- Long-term trend: ${trendLine(g)}
+- Long-term: ${trendLine(g)}
 
-Pre-position monitoring and response resources a few weeks before ${mName(p1)}.`;
-}
-
-function trendLine(g: Grounding) {
-  const t = g.analysis.trend;
-  return t.significant
-    ? `${t.direction} by about ${Math.abs(t.senSlope)} fire-days per year (Mann-Kendall p = ${t.pValue})`
-    : `no statistically significant trend (Mann-Kendall p = ${t.pValue}, Sen's slope ${t.senSlope}/yr)`;
-}
-
-function trend(g: Grounding) {
-  const a = g.analysis;
-  const complete = a.annual.filter((y) => y.year < g.analysis.overlapYears[1]);
-  const max = [...complete].sort((x, y) => y.harmonized - x.harmonized)[0];
-  const min = [...complete].sort((x, y) => x.harmonized - y.harmonized)[0];
-  return `**Long-term change in ${g.regionName}**
-
-Annual harmonized burning shows ${trendLine(g)}.
-
-- Most active year: **${max.year}** (${Math.round(max.harmonized)} fire-days)
-- Least active year: **${min.year}** (${Math.round(min.harmonized)} fire-days)
-- Naive counts would suggest a ${Math.round((a.annual.find((y) => y.year === 2013)!.naive / Math.max(1, a.annual.find((y) => y.year === 2010)!.naive)) * 10) / 10}× jump between 2010 and 2013. Most of that jump comes from the VIIRS sensor switch, not real change. The harmonized series removes it.`;
+The Trends tab shows whether the season is starting earlier.`;
 }
 
 function method(g: Grounding) {
   const a = g.analysis;
   return `**How FireCal harmonizes MODIS and VIIRS**
 
-1. **Confidence filter.** Low-confidence detections are dropped (MODIS < 30%, VIIRS "low").
-2. **Common-grid fire-days.** Every detection is snapped to a 0.01° grid, and we count unique cell-days. Several 375 m VIIRS pixels on the same fire collapse into one fire-day.
-3. **Overlap calibration.** For ${a.overlapYears[0]}–${a.overlapYears[1]}, when both sensors fly, VIIRS records **k = ${a.k}×** the MODIS fire-days here. MODIS-era months are multiplied by k.
+1. **Confidence filter.** Low-confidence detections, static industrial sources and offshore detections are dropped.
+2. **Common-grid fire-days.** Each detection is snapped to a 0.01° grid. Unique cell-days are counted, so several 375 m VIIRS pixels on one fire count once.
+3. **Overlap calibration.** In ${a.overlapYears[0]}–${a.overlapYears[1]}, VIIRS records **k = ${a.k}×** the MODIS fire-days here, so MODIS-only years are scaled by k.
 
-Result: naive totals of **${a.totals.naive.toLocaleString()}** mixed-sensor detections become **${a.totals.harmonized.toLocaleString()}** consistent fire-days, comparable across all years.`;
+Result: **${a.totals.naive.toLocaleString()}** mixed-sensor detections become **${a.totals.harmonized.toLocaleString()}** consistent fire-days.`;
 }
 
 function insight(g: Grounding, f: Focus) {
   const m = g.analysis.months.find((x) => x.year === f.year && x.month === f.month);
   if (!m) return `No data for ${ym(f)}.`;
   const era = m.year >= g.analysis.overlapYears[0] ? "VIIRS (with MODIS cross-check)" : `MODIS only, scaled by k = ${g.analysis.k}`;
-  const level =
-    m.anomaly === "extreme" ? "an **extreme** anomaly" : m.anomaly === "significant" ? "a **statistically significant** anomaly" : m.anomaly === "elevated" ? "**elevated** activity" : "within the normal range";
+  const level = m.anomaly === "extreme" ? "an **extreme** anomaly" : m.anomaly === "significant" ? "a **statistically significant** anomaly" : m.anomaly === "elevated" ? "**elevated** activity" : "within the normal range";
   const clim = g.analysis.climatology[m.month - 1];
   return `**${ym(m)} in ${g.regionName}: ${level}**
 
-${ym(m)} recorded **${m.harmonized} harmonized fire-days** against a 10-year baseline of ${m.baseline ?? "n/a"} for ${mName(m.month)} (${signed(m.pctVsBaseline)}, z = ${m.z ?? "n/a"}). ${mName(m.month)} normally accounts for ${pct(clim.share)} of the year's burning here, so ${m.anomaly ? "this departure matters for seasonal planning" : "this month fits the usual seasonal pattern"}.
+${ym(m)} recorded **${m.harmonized} harmonized fire-days** against a 10-year baseline of ${m.baseline ?? "n/a"} (${signed(m.pctVsBaseline)}, z = ${m.z ?? "n/a"}). ${mName(m.month)} normally holds ${pct(clim.share)} of the year's burning, so ${m.anomaly ? "this departure matters for seasonal planning" : "this month fits the usual pattern"}.
 
-Detection basis: ${era}. MODIS saw ${m.modisRaw} raw hotspots and VIIRS saw ${m.viirsRaw}${m.ratio ? ` (VIIRS/MODIS ratio ${m.ratio})` : ""}. Harmonized Confidence Index: **${m.hci}/100**. ${m.hci >= 60 ? "The sensors agree well." : "Treat this with some caution: confidence is moderate."}`;
+Detection basis: ${era}. MODIS saw ${m.modisRaw} raw hotspots and VIIRS saw ${m.viirsRaw}${m.ratio ? ` (ratio ${m.ratio})` : ""}. Confidence index: **${m.hci}/100**. ${m.hci >= 60 ? "The sensors agree well." : "Treat with some caution."} Possible drivers to check: a dry spell before the month (GPM IMERG rainfall) or a shift in burning practice.`;
 }
 
 function overview(g: Grounding) {
@@ -103,28 +159,101 @@ function overview(g: Grounding) {
 - Most notable anomaly: ${a.anomalies[0] ? `**${ym(a.anomalies[0])}** (${signed(a.anomalies[0].pctVsBaseline)} vs 10-yr avg)` : "none flagged"}
 - Calibration factor k = ${a.k}
 
-Ask about a specific month or year, or request an early-warning brief.`;
+Try: "show live fires", "where are the persistent hot spots?", "is the season starting earlier?", or "what's the outlook?"`;
 }
 
-function brief(g: Grounding) {
+function live(r: any) {
+  if (r.error) return `_${r.error}_`;
+  const ch = r.change_vs_normal_pct;
+  return `**Live: ${r.detections} fire detections in ${r.area} over the last 7 days**
+
+- Last 24 hours: **${r.last_24h}** detections
+- Suomi NPP fire-days: **${r.snpp_fire_days}** vs a normal of **${r.normal_fire_days_for_7_days}** for this time of year${ch === null ? "" : ` (**${signed(ch)}**)`}
+${r.hottest_fire ? `- Most intense fire: **${r.hottest_fire.frp} MW** at ${r.hottest_fire.lat.toFixed(2)}°N ${r.hottest_fire.lon.toFixed(2)}°E (${r.hottest_fire.when})` : ""}
+- Feeds: ${r.sources.join("; ")}
+
+The map now shows the live layer. Pulsing points are the newest detections.`;
+}
+
+function outlookText(r: any) {
+  const h = r.hindcast;
+  return `**Outlook for ${r.area} (next 3 months)**
+
+${r.months.map((m: any) => `- **${ymLabel(m.month)}**: expect ~**${m.expected_fire_days}** fire-days (likely ${m.likely_range[0]}–${m.likely_range[1]}); normal ${m.normal_10yr}; chance above normal **${Math.round(m.chance_above_normal * 100)}%**`).join("\n")}
+
+This is a statistical outlook from past years (no weather input). In a ${h.test_years[0]}–${h.test_years[1]} hindcast it beat 10-year climatology by **${Math.round(h.skill_vs_climatology * 100)}%**, and the likely range held the real value **${Math.round(h.range_coverage * 100)}%** of the time.`;
+}
+
+function hotspots(r: any) {
+  const c = r.counts;
+  return `**Hot-spot trends in ${r.area}**
+
+Getis-Ord Gi* hot-spot analysis per year, with a Mann-Kendall trend on top:
+- **${c.persistent}** persistent, **${c.intensifying}** intensifying, **${c.consecutive}** consecutive, **${c.new}** new hot-spot cells
+- **${c.diminishing}** diminishing and **${c.historical}** historical (cooling) cells, **${c.sporadic}** sporadic
+
+Most active hot-spot cells:
+${r.top_cells.slice(0, 4).map((x: any) => `- ${x.lat.toFixed(2)}°N ${x.lon.toFixed(2)}°E: **${x.category}**, hot in ${x.hot_years} years, ~${x.mean_fire_days_per_year} fire-days/yr`).join("\n") || "- none"}
+
+Persistent and intensifying cells are where patrols and community outreach pay off most.`;
+}
+
+function season(r: any) {
+  if (r.note) return r.note;
+  const t = r.trends;
+  const shift = (x: any, what: string) => (x.significant ? `${what} is shifting **${Math.abs(x.days_per_year)} days ${x.days_per_year < 0 ? "earlier" : "later"} per year** (p = ${x.p_value})` : `${what} shows no significant shift (p = ${x.p_value})`);
+  const len = (x: any) => (x.significant ? `the season is getting **${Math.abs(x.days_per_year)} days ${x.days_per_year > 0 ? "longer" : "shorter"} per year** (p = ${x.p_value})` : `season length is stable (p = ${x.p_value})`);
+  return `**Fire-season timing in ${r.area}**
+
+On average the season starts around **${r.mean.onset}**, peaks around **${r.mean.peak}** and ends around **${r.mean.end}** (~${Math.round(r.mean.length_days)} days).
+
+- Onset: ${shift(t.onset, "onset")}
+- Peak: ${shift(t.peak, "the peak")}
+- Length: ${len(t.length)}
+
+An earlier start means response resources should be ready earlier than they used to be.`;
+}
+
+function rank(r: any) {
+  return `**${r.ranked_by === "anomaly" ? "Most anomalous" : "Most active"} months in ${r.area}**
+
+${r.rows.map((x: any, i: number) => `${i + 1}. **${ymLabel(x.month)}**: ${x.harmonized} fire-days${x.pct_vs_10yr !== null ? ` (${signed(x.pct_vs_10yr)} vs 10-yr avg)` : ""}`).join("\n")}
+
+The map now shows the top month.`;
+}
+
+function compare(r: any, g: Grounding) {
+  return `**${r.area}: ${r.period_a.years.join("–")} vs ${r.period_b.years.join("–")}**
+
+- Mean per year: **${r.period_a.mean_harmonized_fire_days.toLocaleString()}** → **${r.period_b.mean_harmonized_fire_days.toLocaleString()}** fire-days (**${signed(r.change_pct)}**)
+- MODIS alone (one consistent sensor): **${signed(r.modis_only_change_pct)}**, so the change is real, not a harmonization artifact
+- Long-term: ${trendLine(g)}`;
+}
+
+async function brief(g: Grounding, call: (n: string, i?: Record<string, unknown>) => Promise<any>) {
+  const [ov, out, hs, lv] = await Promise.all([call("get_area_overview"), call("get_outlook", { months: 3 }), call("get_hotspot_trends"), call("get_live_fires")]);
   const a = g.analysis;
   const recent = a.anomalies.filter((m) => m.year >= a.overlapYears[1] - 3).slice(0, 3);
   return `# Early-Warning Brief: ${g.regionName}
 
 ## Situation
-Harmonized satellite record ${a.annual[0].year}–${a.overlapYears[1]} (MODIS + VIIRS, ${a.totals.harmonized.toLocaleString()} fire-days). Peak burning season is **${a.peakMonths.slice(0, 2).map(mName).join("–")}**. Long-term: ${trendLine(g)}.
+Harmonized satellite record ${ov.record} (${a.totals.harmonized.toLocaleString()} fire-days). Peak burning is **${ov.peak_months.slice(0, 2).join("–")}**. Long-term: ${trendLine(g)}.${typeof ov.season === "object" ? ` The season typically starts around **${ov.season.onset}**.` : ""}
 
-## Outlook: next 60 days
-${g.outlookMonths.map((o) => `- **${ym(o)}**: typical ${a.climatology[o.month - 1].mean} fire-days (${pct(a.climatology[o.month - 1].share)} of the annual total)`).join("\n")}
+## Live: last 7 days
+${lv.error ? `- ${lv.error}` : `- **${lv.detections}** detections, **${lv.last_24h}** in the last 24 h\n- S-NPP fire-days **${lv.snpp_fire_days}** vs normal **${lv.normal_fire_days_for_7_days}**${lv.change_vs_normal_pct === null ? "" : ` (${signed(lv.change_vs_normal_pct)})`}`}
 
-## Recent anomalies
-${recent.length ? recent.map((m) => `- ${ym(m)}: ${m.anomaly}, ${signed(m.pctVsBaseline)} vs 10-yr avg (HCI ${m.hci})`).join("\n") : "- No significant anomalies in the last 3 years."}
+## Outlook: next 3 months
+${out.months.map((m: any) => `- **${ymLabel(m.month)}**: ~${m.expected_fire_days} fire-days (likely ${m.likely_range[0]}–${m.likely_range[1]}; normal ${m.normal_10yr})`).join("\n")}
+- Statistical model; hindcast skill **${Math.round(out.hindcast.skill_vs_climatology * 100)}%** better than climatology.
 
-## Watch locations
-${g.hotCells.length ? g.hotCells.map((h) => `- ${h.lat.toFixed(2)}°N ${h.lon.toFixed(2)}°E: ~${h.fireDays} fire-days/yr in these months`).join("\n") : "- No recurring hot cells for the outlook months."}
+## Hot-spot trends
+- ${hs.counts.persistent} persistent, ${hs.counts.intensifying} intensifying, ${hs.counts.consecutive} consecutive cells
+${hs.top_cells.slice(0, 3).map((c: any) => `- ${c.lat.toFixed(2)}°N ${c.lon.toFixed(2)}°E: ${c.category}, ~${c.mean_fire_days_per_year} fire-days/yr`).join("\n")}
+${recent.length ? `\nRecent anomalies: ${recent.map((m) => `${ym(m)} (${signed(m.pctVsBaseline)})`).join(", ")}.` : ""}
 
 ## Recommended actions
-- Increase satellite alert checks (FIRMS NRT) during the outlook window.
-- Stage patrols and community volunteers near the watch locations.
-- Coordinate with agricultural extension on controlled-burn timing.`;
+- Check FIRMS alerts daily from about two weeks before the usual onset.
+- Pre-position patrols and community volunteers at the persistent hot-spot cells above.
+- Coordinate controlled-burn timing with agricultural extension before the peak.
+- Re-issue this brief if live activity runs well above normal.`;
 }

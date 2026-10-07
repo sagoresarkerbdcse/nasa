@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
 import L from "leaflet";
-import { Crosshair, Layers, Pause, Play, Satellite, SquareDashedMousePointer, X } from "lucide-react";
+import { Box, Crosshair, Layers, Pause, Play, Radio, Satellite, SquareDashedMousePointer, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleMarker, MapContainer, Marker, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { fmt, heat, powScale } from "../lib/color";
 import { cellValues } from "../lib/harmonize";
 import { MONTHS, REGIONS } from "../lib/regions";
-import type { BBox, GridFile, PointsFile, SensorView } from "../lib/types";
+import { HOTSPOT_FAMILY, HOTSPOT_META, RISK_CLASSES, cellAnomaly, cellOutlook, divergingColor, emergingHotspots, riskClass } from "../lib/analytics";
+import type { BBox, GridFile, LiveFile, MapLayer, PointsFile, SensorView } from "../lib/types";
+import { Globe } from "./Globe";
 import { EmberCanvas, type EmberSource } from "./EmberCanvas";
 
 interface Props {
@@ -25,7 +27,26 @@ interface Props {
   onMonth: (m: number | null) => void;
   playing: boolean;
   onPlaying: (p: boolean) => void;
+  layer: MapLayer;
+  onLayer: (l: MapLayer) => void;
+  view3d: boolean;
+  onView3d: (v: boolean) => void;
+  live: LiveFile | null;
+  outlookTarget: { year: number; month: number };
+  outlookScale: number;
 }
+
+const LAYERS: { id: MapLayer; label: string }[] = [
+  { id: "activity", label: "Activity" },
+  { id: "anomaly", label: "Anomaly" },
+  { id: "hotspots", label: "Hot-spot trends" },
+  { id: "outlook", label: "Outlook" },
+  { id: "live", label: "Live 7d" },
+];
+
+const NO_CELLS: { t: number; ll: [number, number] }[] = [];
+const SENSOR_COLORS: Record<number, string> = { 0: "#c084fc", 1: "#ffe08a", 2: "#ff9a52", 3: "#ff5a3f" };
+const SENSOR_NAMES: Record<number, string> = { 0: "MODIS", 1: "VIIRS S-NPP", 2: "VIIRS NOAA-20", 3: "VIIRS NOAA-21" };
 
 const VIEWS: { id: SensorView; label: string; sub: string }[] = [
   { id: "harmonized", label: "Harmonized", sub: "fire-days" },
@@ -96,18 +117,71 @@ export function MapPanel(p: Props) {
   const tileHandlers = useMemo(() => tileFallback(() => setGibsDown(true), effectiveBase !== "dark"), [base.url]); // eslint-disable-line react-hooks/exhaustive-deps
   const years = grid.meta.lastYear - grid.meta.firstYear + 1;
   const animKey = `${year}-${month ?? 0}-${view}`;
+  const { layer } = p;
+  const cellSize = grid.meta.cellSize;
+  const cellBounds = (i: number): L.LatLngBoundsExpression => {
+    const [lon, lat] = grid.cells[i];
+    return [
+      [lat - cellSize / 2, lon - cellSize / 2],
+      [lat + cellSize / 2, lon + cellSize / 2],
+    ];
+  };
+  const anomalies = useMemo(() => (layer === "anomaly" ? cellAnomaly(grid, year, month ?? undefined) : null), [layer, grid, year, month]);
+  const hotspots = useMemo(() => (layer === "hotspots" ? emergingHotspots(grid).filter((c) => c.category !== "none") : null), [layer, grid]);
+  const risk = useMemo(() => (layer === "outlook" ? cellOutlook(grid, p.outlookTarget.month, p.outlookScale) : null), [layer, grid, p.outlookTarget.month, p.outlookScale]);
+  const liveLatest = useMemo(() => {
+    const d = p.live?.detections ?? [];
+    return d.length ? Math.max(...d.map((x) => Date.parse(`${x[5]}T${x[6].slice(0, 2)}:${x[6].slice(2)}:00Z`))) : 0;
+  }, [p.live]);
+  const liveDets = useMemo(
+    () =>
+      (p.live?.detections ?? []).map((d) => ({
+        d,
+        recent: liveLatest - Date.parse(`${d[5]}T${d[6].slice(0, 2)}:${d[6].slice(2)}:00Z`) <= 24 * 3600 * 1000,
+      })),
+    [p.live, liveLatest],
+  );
+  const globeSpikes = useMemo(() => cells.map((c) => ({ lon: c.ll[1], lat: c.ll[0], t: c.t })), [cells]);
+  const globeLive = useMemo(() => liveDets.map(({ d, recent }) => ({ lon: d[0], lat: d[1], recent })), [liveDets]);
+  const timeLayer = layer === "activity" || layer === "anomaly";
 
   return (
     <section className="panel hud flex h-full min-h-[480px] flex-col overflow-hidden" aria-label="Spatial view">
       <header className="panel-head flex items-center gap-3 px-4 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">01</span>
-        <h2 className="eyebrow !text-slate-200">Spatial view</h2>
-        <span className="hidden truncate text-[12px] text-slate-400 sm:inline">· {p.regionName}</span>
-        <div className="ml-auto flex items-center gap-1.5 font-mono text-[10.5px] text-slate-400">
+        <h2 className="eyebrow shrink-0 whitespace-nowrap !text-slate-200">Spatial view</h2>
+        <span className="hidden min-w-0 truncate text-[12px] text-slate-400 md:inline">· {p.regionName}</span>
+        <div className="ml-auto hidden items-center gap-1.5 font-mono text-[10.5px] text-slate-400 sm:flex">
           <Crosshair className="h-3.5 w-3.5 text-slate-500" />
           <span ref={coordRef} className="tabular-nums">--.---°N --.---°E</span>
         </div>
       </header>
+      <div className="border-b border-white/[0.06] bg-black/20">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto px-3 py-1.5 scroll-thin" role="tablist" aria-label="Map layer">
+          {LAYERS.map((l) => (
+            <button
+              key={l.id}
+              role="tab"
+              aria-selected={layer === l.id}
+              onClick={() => p.onLayer(l.id)}
+              className={`relative shrink-0 rounded-[3px] px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${layer === l.id ? "text-white" : "text-slate-400 hover:text-white"}`}
+            >
+              {layer === l.id && <motion.span layoutId="layer-pill" className="absolute inset-0 rounded-[3px] bg-nasa-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+              <span className="relative flex items-center gap-1">
+                {l.id === "live" && <Radio className={`h-3 w-3 ${layer === "live" ? "" : "text-nasa-red"}`} />}
+                {l.label}
+              </span>
+            </button>
+          ))}
+          <button
+            onClick={() => p.onView3d(!p.view3d)}
+            className={`ml-1 flex shrink-0 items-center gap-1 rounded-[3px] border px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${p.view3d ? "border-cyan bg-cyan/15 text-cyan" : "border-white/10 text-slate-300 hover:border-white/30"}`}
+            aria-pressed={p.view3d}
+          >
+            <Box className="h-3 w-3" /> 3D
+          </button>
+        </div>
+      </div>
 
       <div className="relative min-h-0 flex-1">
         <MapContainer center={[23.6, 90.4]} zoom={7} minZoom={5} maxZoom={12} zoomControl={false} className={`absolute inset-0 h-full w-full ${drawing ? "cursor-crosshair" : ""}`} attributionControl>
@@ -124,9 +198,9 @@ export function MapPanel(p: Props) {
           <FitToBBox bbox={bbox} />
           <ZoomControl />
           <MouseCoords target={coordRef} />
-          <EmberSources cells={cells} onChange={setEmbers} />
+          <EmberSources cells={layer === "activity" ? cells : NO_CELLS} onChange={setEmbers} />
           <Rectangle bounds={toBounds(bbox)} pathOptions={{ color: "#4d8eff", weight: 1.5, dashArray: "2 6", fillColor: "#0b3d91", fillOpacity: 0.06 }} interactive={false} />
-          {cells.map((c) => (
+          {layer === "activity" && cells.map((c) => (
             <CircleMarker
               key={`${animKey}-${c.i}-g`}
               center={c.ll}
@@ -136,7 +210,7 @@ export function MapPanel(p: Props) {
               interactive={false}
             />
           ))}
-          {cells.map((c) => (
+          {layer === "activity" && cells.map((c) => (
             <CircleMarker
               key={`${animKey}-${c.i}`}
               center={c.ll}
@@ -156,7 +230,7 @@ export function MapPanel(p: Props) {
               </Tooltip>
             </CircleMarker>
           ))}
-          {yearPoints.map((pt, i) => (
+          {layer === "activity" && yearPoints.map((pt, i) => (
             <CircleMarker
               key={`p${i}`}
               center={[pt[1], pt[0]]}
@@ -166,6 +240,97 @@ export function MapPanel(p: Props) {
               interactive={false}
             />
           ))}
+          {anomalies &&
+            [...anomalies.entries()].map(([i, a]) => {
+              const up = a.change > 0;
+              const t = Math.max(-1, Math.min(1, a.change / 1.5));
+              return (
+                <Rectangle
+                  key={`an-${animKey}-${i}`}
+                  bounds={cellBounds(i)}
+                  className="fc-cell"
+                  pathOptions={{ color: "#0c1016", weight: 1, fillColor: divergingColor(t), fillOpacity: 0.78 }}
+                >
+                  <Tooltip className="fc-tip" direction="top">
+                    <div className={up ? "text-orange-300" : "text-blue-300"}>
+                      {up ? "+" : ""}
+                      {Math.round(a.change * 100)}% vs previous 10 yrs
+                    </div>
+                    <div className="text-slate-400">
+                      {fmt(a.value)} fire-days vs {fmt(a.baseline)} normal · {month ? `${MONTHS[month - 1]} ` : ""}
+                      {year}
+                    </div>
+                  </Tooltip>
+                </Rectangle>
+              );
+            })}
+          {hotspots?.map((c) => (
+            <Rectangle
+              key={`hs-${c.cell}`}
+              bounds={cellBounds(c.cell)}
+              className="fc-cell"
+              pathOptions={{
+                color: HOTSPOT_META[c.category].outline === "none" ? "#0c1016" : "#ffffff",
+                weight: HOTSPOT_META[c.category].outline === "none" ? 1 : 1.6,
+                dashArray: HOTSPOT_META[c.category].outline === "dashed" ? "3 3" : undefined,
+                fillColor: HOTSPOT_META[c.category].color,
+                fillOpacity: 0.72,
+              }}
+            >
+              <Tooltip className="fc-tip" direction="top">
+                <div className="text-white">{HOTSPOT_META[c.category].label} hot spot</div>
+                <div className="text-slate-400">
+                  hot in {c.hotYears} yrs · ~{fmt(c.meanFireDays)} fire-days/yr
+                </div>
+                <div className="text-slate-500">{HOTSPOT_META[c.category].blurb}</div>
+              </Tooltip>
+            </Rectangle>
+          ))}
+          {risk &&
+            [...risk.entries()].map(([i, v]) => {
+              const rc = riskClass(v);
+              return (
+                <Rectangle key={`rk-${i}-${p.outlookTarget.month}`} bounds={cellBounds(i)} className="fc-cell" pathOptions={{ color: "#0c1016", weight: 1, fillColor: rc.color, fillOpacity: v < 1 ? 0.35 : 0.82 }}>
+                  <Tooltip className="fc-tip" direction="top">
+                    <div className="text-white">{rc.label} risk</div>
+                    <div className="text-slate-400">
+                      ~{fmt(v)} expected fire-days · {MONTHS[p.outlookTarget.month - 1]} {p.outlookTarget.year}
+                    </div>
+                  </Tooltip>
+                </Rectangle>
+              );
+            })}
+          {layer === "live" &&
+            liveDets.map(({ d, recent }, i) => (
+              <CircleMarker
+                key={`lv-${i}`}
+                center={[d[1], d[0]]}
+                radius={recent ? 4.5 : 3}
+                pathOptions={{ color: "#fff", weight: recent ? 1 : 0, fillColor: SENSOR_COLORS[d[2]], fillOpacity: recent ? 1 : 0.65 }}
+              >
+                <Tooltip className="fc-tip" direction="top">
+                  <div style={{ color: SENSOR_COLORS[d[2]] }}>{SENSOR_NAMES[d[2]]}</div>
+                  <div className="text-slate-400">
+                    {d[5]} {d[6].slice(0, 2)}:{d[6].slice(2)} UTC · {d[7] ? "night" : "day"}
+                  </div>
+                  <div className="text-slate-400">
+                    FRP {d[4]} MW · {["low", "nominal", "high"][d[3]]} confidence
+                  </div>
+                </Tooltip>
+              </CircleMarker>
+            ))}
+          {layer === "live" &&
+            liveDets
+              .filter((x) => x.recent)
+              .slice(-60)
+              .map(({ d }, i) => (
+                <Marker
+                  key={`lp-${i}`}
+                  position={[d[1], d[0]]}
+                  interactive={false}
+                  icon={L.divIcon({ className: "", html: '<div class="fc-pulse" style="width:18px;height:18px"><span style="border-color:#fc3d21;box-shadow:0 0 14px #fc3d21"></span></div>', iconSize: [18, 18] })}
+                />
+              ))}
           {hovered !== null && grid.cells[hovered] && (
             <Marker
               position={[grid.cells[hovered][1], grid.cells[hovered][0]]}
@@ -184,6 +349,14 @@ export function MapPanel(p: Props) {
         </MapContainer>
 
         <EmberCanvas sources={embers} />
+        <AnimatePresence>
+          {p.view3d && (
+            <motion.div key="globe" className="absolute inset-0 z-[480]" initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.6 }}>
+              <Globe spikes={layer === "live" ? [] : globeSpikes} live={layer === "live" || layer === "activity" ? globeLive : []} bbox={bbox} label={p.regionName} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <LayerLegend layer={layer} live={p.live} target={p.outlookTarget} />
 
         {/* Satellite swath sweep */}
         <div className="pointer-events-none absolute inset-0 z-[440] overflow-hidden" aria-hidden>
@@ -195,7 +368,7 @@ export function MapPanel(p: Props) {
         </div>
 
         {/* Row 1: sensor switcher */}
-        <div className="absolute left-3 top-3 z-[500]">
+        <div className={`absolute left-3 top-3 z-[500] transition-opacity ${layer === "activity" && !p.view3d ? "" : "pointer-events-none opacity-0"}`}>
           <div className="flex items-center rounded-[4px] border border-white/10 bg-[#070a0f]/90 p-0.5 backdrop-blur" role="tablist" aria-label="Sensor view">
             <Satellite className="mx-2 h-3.5 w-3.5 text-slate-500" aria-hidden />
             {VIEWS.map((v) => (
@@ -248,7 +421,7 @@ export function MapPanel(p: Props) {
               setGibsDown(false);
             }}
             aria-label="Basemap"
-            className="ml-auto rounded-[3px] border border-white/10 bg-[#070a0f]/90 px-2 py-1 font-mono text-[10px] uppercase text-slate-200 sm:hidden"
+            className={`ml-auto rounded-[3px] border border-white/10 bg-[#070a0f]/90 px-2 py-1 font-mono text-[10px] uppercase text-slate-200 sm:hidden ${p.view3d ? "invisible" : ""}`}
           >
             {BASEMAPS.map((b) => (
               <option key={b.id} value={b.id}>
@@ -256,7 +429,7 @@ export function MapPanel(p: Props) {
               </option>
             ))}
           </select>
-          <div className="ml-auto hidden items-center rounded-[3px] border border-white/10 bg-[#070a0f]/85 p-0.5 backdrop-blur sm:flex">
+          <div className={`ml-auto hidden items-center rounded-[3px] border border-white/10 bg-[#070a0f]/85 p-0.5 backdrop-blur sm:flex ${p.view3d ? "invisible" : ""}`}>
             <Layers className="mx-1.5 h-3.5 w-3.5 text-slate-500" aria-hidden />
             {BASEMAPS.map((b) => (
               <button
@@ -279,7 +452,7 @@ export function MapPanel(p: Props) {
               Click and drag to define your area of interest
             </motion.div>
           )}
-          {gibsDown && basemap !== "dark" && (
+          {gibsDown && basemap !== "dark" && !p.view3d && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[112px] left-1/2 z-[500] w-max max-w-[90%] -translate-x-1/2 rounded-[3px] border border-amber-300/30 bg-[#070a0f]/90 px-3 py-1.5 font-mono text-[10.5px] text-amber-200">
               NASA GIBS imagery unreachable. Showing the dark basemap.
             </motion.div>
@@ -297,7 +470,7 @@ export function MapPanel(p: Props) {
         </AnimatePresence>
 
         {/* Time playbar */}
-        <div className="absolute inset-x-3 bottom-3 z-[500]">
+        <div className={`absolute inset-x-3 bottom-3 z-[500] transition-opacity ${timeLayer ? "" : "pointer-events-none opacity-0"}`} aria-hidden={!timeLayer}>
           <div className="rounded-[4px] border border-white/10 bg-[#070a0f]/90 px-3 py-2.5 backdrop-blur sm:px-4">
             <div className="flex items-center gap-3">
               <button
@@ -343,11 +516,19 @@ export function MapPanel(p: Props) {
                   {m}
                 </button>
               ))}
-              <div className="ml-auto hidden items-center gap-2 pl-2 sm:flex">
-                <span className="font-mono text-[9px] uppercase text-slate-500">Low</span>
-                <span className="h-1.5 w-20 rounded-[1px]" style={{ background: `linear-gradient(90deg, ${heat(0.2)}, ${heat(0.5)}, ${heat(0.75)}, ${heat(1)})` }} />
-                <span className="font-mono text-[9px] uppercase text-slate-500">High</span>
-              </div>
+              {layer === "anomaly" ? (
+                <div className="ml-auto hidden items-center gap-2 pl-2 sm:flex">
+                  <span className="font-mono text-[9px] uppercase text-blue-300">Below normal</span>
+                  <span className="h-1.5 w-24 rounded-[1px]" style={{ background: `linear-gradient(90deg, ${divergingColor(-1)}, ${divergingColor(0)}, ${divergingColor(1)})` }} />
+                  <span className="font-mono text-[9px] uppercase text-orange-300">Above</span>
+                </div>
+              ) : (
+                <div className="ml-auto hidden items-center gap-2 pl-2 sm:flex">
+                  <span className="font-mono text-[9px] uppercase text-slate-500">Low</span>
+                  <span className="h-1.5 w-20 rounded-[1px]" style={{ background: `linear-gradient(90deg, ${heat(0.2)}, ${heat(0.5)}, ${heat(0.75)}, ${heat(1)})` }} />
+                  <span className="font-mono text-[9px] uppercase text-slate-500">High</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -384,7 +565,7 @@ function FitToBBox({ bbox }: { bbox: BBox }) {
   const map = useMap();
   const key = bbox.join(",");
   useEffect(() => {
-    map.flyToBounds(toBounds(bbox), { padding: [40, 40], duration: 1.1, maxZoom: 9 });
+    map.flyToBounds(toBounds(bbox), { padding: [60, 60], duration: 1.1, maxZoom: 8 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, map]);
   return null;
@@ -454,3 +635,71 @@ function DrawBox({ onDone }: { onDone: (b: BBox | null) => void }) {
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+
+function LayerLegend({ layer, live, target }: { layer: MapLayer; live: LiveFile | null; target: { year: number; month: number } }) {
+  if (layer === "activity" || layer === "anomaly") return null; // these share the time playbar legend
+  const box = "absolute bottom-3 left-3 z-[500] max-w-[calc(100%-1.5rem)] rounded-[4px] border border-white/10 bg-[#070a0f]/92 px-3 py-2.5 backdrop-blur";
+  if (layer === "hotspots")
+    return (
+      <motion.div key="lg-hs" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={box}>
+        <div className="eyebrow mb-1.5 !text-[9.5px]">Emerging hot spots · Gi* + Mann-Kendall · 2003–present</div>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {Object.values(HOTSPOT_FAMILY).map((f) => (
+            <span key={f.label} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+              <span className="h-2.5 w-2.5 rounded-[1px]" style={{ background: f.color }} />
+              {f.label}
+            </span>
+          ))}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-3 font-mono text-[9.5px] text-slate-500">
+          <span className="flex items-center gap-1"><span className="h-2 w-2 border border-white" /> intensifying / new</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 border border-dashed border-white" /> consecutive / historical</span>
+          <span>no outline: persistent / diminishing</span>
+        </div>
+      </motion.div>
+    );
+  if (layer === "outlook")
+    return (
+      <motion.div key="lg-ol" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={box}>
+        <div className="eyebrow mb-1.5 !text-[9.5px]">
+          Fire risk outlook · {MONTHS[target.month - 1]} {target.year} · expected fire-days per 0.25° cell
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {RISK_CLASSES.map((c, i) => (
+            <span key={c.label} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+              <span className="h-2.5 w-2.5 rounded-[1px]" style={{ background: c.color }} />
+              {c.label} <span className="font-mono text-[9.5px] text-slate-500">{i === 0 ? "<1" : c.max === Infinity ? `≥${RISK_CLASSES[i - 1].max}` : `${RISK_CLASSES[i - 1].max}–${c.max}`}</span>
+            </span>
+          ))}
+        </div>
+        <div className="mt-1 font-mono text-[9.5px] text-slate-500">Statistical model from past years. No weather input.</div>
+      </motion.div>
+    );
+  // live
+  const n = live?.detections.length ?? 0;
+  return (
+    <motion.div key="lg-lv" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={box}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-radar rounded-full bg-nasa-red" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-nasa-red" />
+        </span>
+        <span className="eyebrow !text-[9.5px] !text-slate-200">
+          Live · last 7 days · {n} detections{live ? ` · updated ${new Date(live.generatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC` : ""}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {[1, 2, 3, 0].map((k) => (
+          <span key={k} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: SENSOR_COLORS[k] }} />
+            {SENSOR_NAMES[k]}
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
+          <span className="h-2.5 w-2.5 rounded-full border-2 border-nasa-red" /> last 24 h
+        </span>
+      </div>
+      {n === 0 && <div className="mt-1 text-[11px] text-slate-500">No fires detected in the study area this week (off-season).</div>}
+    </motion.div>
+  );
+}

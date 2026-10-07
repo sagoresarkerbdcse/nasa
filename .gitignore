@@ -3,3 +3,4 @@ dist
 pipeline/raw
 .env
 *.log
+.firecal

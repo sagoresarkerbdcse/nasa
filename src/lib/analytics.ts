@@ -76,15 +76,26 @@ export type HotspotCategory =
   | "historical"
   | "none";
 
-export const HOTSPOT_META: Record<HotspotCategory, { label: string; color: string; blurb: string }> = {
-  intensifying: { label: "Intensifying", color: "#ff2d1a", blurb: "Hot spot in ≥90% of years and getting hotter" },
-  persistent: { label: "Persistent", color: "#ff7a1a", blurb: "Hot spot in ≥90% of years, no trend" },
-  consecutive: { label: "Consecutive", color: "#ffb020", blurb: "Unbroken run of hot-spot years ending now" },
-  new: { label: "New", color: "#ffe08a", blurb: "Hot spot for the first time in the latest year" },
-  sporadic: { label: "Sporadic", color: "#c084fc", blurb: "On-and-off hot spot, hot in the latest year" },
-  diminishing: { label: "Diminishing", color: "#38d3f0", blurb: "Long-running hot spot that is cooling" },
-  historical: { label: "Historical", color: "#4d8eff", blurb: "Was a hot spot for most years, not anymore" },
-  none: { label: "No pattern", color: "#475569", blurb: "Not a statistically significant hot spot" },
+/**
+ * Display families use three colours validated for all-pairs separation on the
+ * dark surface (orange / blue / aqua); the exact category is carried by the
+ * outline style, legend and tooltip (never colour alone).
+ */
+export const HOTSPOT_FAMILY = {
+  active: { label: "Active hot spot", color: "#d95926" },
+  cooling: { label: "Cooling hot spot", color: "#3987e5" },
+  sporadic: { label: "On-and-off", color: "#199e70" },
+} as const;
+
+export const HOTSPOT_META: Record<HotspotCategory, { label: string; family: keyof typeof HOTSPOT_FAMILY | null; outline: "solid" | "dashed" | "none"; color: string; blurb: string }> = {
+  intensifying: { label: "Intensifying", family: "active", outline: "solid", color: HOTSPOT_FAMILY.active.color, blurb: "Hot spot in ≥90% of years and getting hotter" },
+  new: { label: "New", family: "active", outline: "solid", color: HOTSPOT_FAMILY.active.color, blurb: "Hot spot for the first time in the latest year" },
+  consecutive: { label: "Consecutive", family: "active", outline: "dashed", color: HOTSPOT_FAMILY.active.color, blurb: "Unbroken run of hot-spot years ending now" },
+  persistent: { label: "Persistent", family: "active", outline: "none", color: HOTSPOT_FAMILY.active.color, blurb: "Hot spot in ≥90% of years, no trend" },
+  diminishing: { label: "Diminishing", family: "cooling", outline: "none", color: HOTSPOT_FAMILY.cooling.color, blurb: "Long-running hot spot that is cooling" },
+  historical: { label: "Historical", family: "cooling", outline: "dashed", color: HOTSPOT_FAMILY.cooling.color, blurb: "Was a hot spot for most years, not anymore" },
+  sporadic: { label: "Sporadic", family: "sporadic", outline: "none", color: HOTSPOT_FAMILY.sporadic.color, blurb: "On-and-off hot spot, hot in the latest year" },
+  none: { label: "No pattern", family: null, outline: "none", color: "#475569", blurb: "Not a statistically significant hot spot" },
 };
 
 export interface CellHotspot {
@@ -392,13 +403,23 @@ export function cellOutlook(grid: GridFile, month: number, scale: number): Map<n
   return out;
 }
 
+/** Ordinal risk classes on a single-hue (orange) ramp, dim → bright on the dark surface. */
 export const RISK_CLASSES = [
-  { max: 1, label: "Low", color: "#1f6f4a" },
-  { max: 5, label: "Moderate", color: "#c9b53a" },
-  { max: 20, label: "High", color: "#ff9a1a" },
-  { max: 60, label: "Very high", color: "#ff4d1f" },
-  { max: Infinity, label: "Extreme", color: "#c3122f" },
+  { max: 1, label: "Low", color: "#4a2c1e" },
+  { max: 5, label: "Moderate", color: "#8a3c18" },
+  { max: 20, label: "High", color: "#c24f17" },
+  { max: 60, label: "Very high", color: "#f0702a" },
+  { max: Infinity, label: "Extreme", color: "#ffb27a" },
 ];
+
+/** Diverging blue ↔ gray ↔ red for change vs normal; t in [-1, 1]. */
+export function divergingColor(t: number): string {
+  const mid = [56, 56, 53];
+  const pole = t >= 0 ? [230, 103, 103] : [57, 135, 229];
+  const f = Math.min(1, Math.abs(t));
+  const c = mid.map((m, i) => Math.round(m + (pole[i] - m) * f));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
 export const riskClass = (v: number) => RISK_CLASSES.find((c) => v < c.max)!;
 
 // ---------------------------------------------------------------------------

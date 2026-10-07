@@ -9,7 +9,9 @@ export interface AnalystMessage {
   kind: AnalystMode;
   content: string;
   streaming?: boolean;
-  source?: "claude" | "offline";
+  source?: "claude" | "offline" | "openrouter";
+  tools?: { name: string; input: Record<string, unknown> }[];
+  costUsd?: number;
   focus?: { year: number; month: number };
   regionName?: string;
 }
@@ -24,7 +26,16 @@ interface Request {
 
 let nextId = 1;
 
-export function useAnalyst() {
+export interface AnalystBudget {
+  spentUsd: number;
+  budgetUsd: number;
+  remainingUsd: number;
+}
+
+export function useAnalyst(onAction?: (action: Record<string, unknown>) => void) {
+  const actionRef = useRef(onAction);
+  actionRef.current = onAction;
+  const [budget, setBudget] = useState<AnalystBudget | null>(null);
   const [messages, setMessages] = useState<AnalystMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -79,6 +90,13 @@ export function useAnalyst() {
             patch({ content: text });
           } else if (evt.type === "done") {
             patch({ source: evt.source });
+          } else if (evt.type === "tool") {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, tools: [...(m.tools ?? []), { name: evt.name, input: evt.input ?? {} }] } : m)));
+          } else if (evt.type === "action") {
+            actionRef.current?.(evt.action);
+          } else if (evt.type === "usage") {
+            patch({ costUsd: evt.costUsd });
+            if (evt.budget) setBudget(evt.budget);
           }
         }
       }
@@ -104,5 +122,5 @@ export function useAnalyst() {
     setMessages([]);
   }, []);
 
-  return { messages, busy, ask, clear };
+  return { messages, busy, ask, clear, budget };
 }
