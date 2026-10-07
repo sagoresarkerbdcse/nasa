@@ -30,8 +30,12 @@ jobs:
         run: |
           git config user.name "firecal-data-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Re-base the freshly built data onto the latest main without merging data files.
+          rm -rf /tmp/fc-new && mkdir -p /tmp/fc-new && cp -r public/data/live.json /tmp/fc-new/
+          git fetch origin main
+          git reset --hard origin/main
+          cp -r /tmp/fc-new/$(basename public/data/live.json) $(dirname public/data/live.json)/
           git add public/data/live.json
-          if git diff --cached --quiet; then echo "No change."; exit 0; fi
-          git commit -m "data: refresh live FIRMS fires"
-          git pull --rebase origin main
-          git push
+          if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
+          git commit -m "data: refresh live.json"
+          git push origin HEAD:main

@@ -20,6 +20,9 @@ years.sort((a, b) => a.year - b.year);
 if (!years.length) throw new Error(`no global-YYYY.json files in ${dir}`);
 const firstYear = years[0].year;
 const lastYear = years[years.length - 1].year;
+// Refuse to publish a record with holes: a missing year would read as "no fire".
+const missing = Array.from({ length: lastYear - firstYear + 1 }, (_, i) => firstYear + i).filter((y) => !years.some((x) => x.year === y));
+if (missing.length && !process.env.ALLOW_GAPS) throw new Error(`missing years: ${missing.join(", ")} (re-run those jobs, or set ALLOW_GAPS=1)`);
 const nY = lastYear - firstYear + 1;
 console.log(`merging ${years.length} years ${firstYear}-${lastYear}`);
 
@@ -63,11 +66,13 @@ const ids = [...cellIds].sort((a, b) => a - b);
 const yearly: number[] = []; // ids.length × nY harmonized fire-days
 const clim: number[] = []; // ids.length × 12 mean harmonized fire-days, last 10 years
 const recentYears = years.slice(-10);
+const byYear = new Map(years.map((y) => [y.year, y]));
 for (const id of ids) {
-  for (const y of years) {
-    const arr = y.cells[id];
+  // Always one value per calendar year in the range so the client can index by year.
+  for (let yr = firstYear; yr <= lastYear; yr++) {
+    const arr = byYear.get(yr)?.cells[id];
     let tot = 0;
-    if (arr) for (let mo = 0; mo < 12; mo++) tot += y.year >= 2012 ? arr[mo * 2 + 1] : arr[mo * 2] * kWorld;
+    if (arr) for (let mo = 0; mo < 12; mo++) tot += yr >= 2012 ? arr[mo * 2 + 1] : arr[mo * 2] * kWorld;
     yearly.push(Math.round(tot));
   }
   for (let mo = 0; mo < 12; mo++) {
