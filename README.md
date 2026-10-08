@@ -18,12 +18,40 @@ MODIS (1 km, 2000→) and VIIRS (375 m, 2012→) both detect active fires, but y
 |---|---|---|
 | 1. Confidence filter | Drop low-confidence detections (MODIS < 30%, VIIRS "low") | `pipeline/grid-builder.ts` |
 | 2. Common-grid fire-days | Snap every detection to a 0.01° (~1 km) grid and count unique *cell × day* pairs, so several 375 m pixels on one fire count once | `pipeline/grid-builder.ts` |
-| 3. Overlap calibration | In 2012→, k = ΣVIIRS fire-days ÷ ΣMODIS fire-days for the selected area; MODIS-only years are scaled by k | `src/lib/harmonize.ts` |
+| 3. Transfer (v2) | VIIRS-equivalent = k(month) × MODIS + small-fire floor(month), trained on the 2013–2021 overlap, shrunk toward the parent (area → domain/world, cell → 10° block → world), with bootstrap and leave-one-year-out 90% intervals | `src/lib/harmonize2.ts` |
 | 4. Anomalies | Each month vs the same month in the previous 10 years (z-score + % change, with an over-dispersed counting-noise floor) | `src/lib/harmonize.ts` |
 | 5. Trend | Mann-Kendall test + Sen's slope on annual totals | `src/lib/harmonize.ts` |
 | 6. Confidence (HCI) | 0–100 index from detection confidence, MODIS/VIIRS agreement and sample size | `src/lib/harmonize.ts` |
 
 The browser, the API server and the tests all use the same harmonization engine (`src/lib/harmonize.ts`).
+
+## Harmonization v2 and the open dataset
+
+Scores come from a **blind test**. The transfer is trained on some overlap years and used to harmonize the MODIS data of other years as if VIIRS did not exist; the result is compared with what VIIRS actually saw.
+
+| Method | Monthly country error (median) | Annual |
+|---|---|---|
+| One global ratio | ~36–39% | ~23–25% |
+| One ratio per country (v1) | ~22–24% | ~6–8% |
+| **v2: season ratio + small-fire floor** | **~12–14%** | **~5–6%** |
+
+The v2 90% intervals contain about 85–91% of held-out values.
+
+The **Harmonization Lab** (`/lab`) shows the evidence:
+- the blind-test table and each country's seasonal transfer,
+- **MODIS detection probability** from same-overpass VIIRS/Aqua matchups: the fire power at which MODIS sees half of the fires, at nadir and at the swath edge,
+- **Terra/Aqua orbit drift** and what it does to MODIS-only trends,
+- **fire radiative energy → CO₂ / CO / PM2.5**.
+
+Every run of the global workflow packages an **open dataset**:
+- CF-1.8 NetCDF with 90% intervals,
+- Cloud-Optimized GeoTIFFs,
+- country and world CSVs with emissions,
+- a STAC catalog and a Frictionless datapackage,
+- a quickstart notebook,
+- the methods document ([`docs/ATBD.md`](docs/ATBD.md)).
+
+To publish it with a DOI (Zenodo) and on Kaggle, see [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
 ## Features
 
@@ -39,6 +67,7 @@ The browser, the API server and the tests all use the same harmonization engine 
 - **Before/After harmonization toggle** with an animated counter.
 - **AI analyst** with tools. It runs real statistics (area overview, ranking, period comparison, hot spots, season timing, outlook, live fires, country ranking, fire science) and drives the dashboard itself: it moves the map, switches layers and opens tabs. It is grounded only in computed numbers. Without an API key, a free offline analyst answers instead.
 - **Guided tour** on first visit (reopen with the compass button) and a **Data sources** panel listing every dataset, its provider, resolution, period, where it is used and how to cite it.
+- **Download** any area's monthly harmonized record (CSV with 90% intervals) from the Insights panel.
 - **Early-warning PDF brief** export, **presentation mode** (guided tour), and shareable URLs (state lives in the URL hash).
 - **Explain page** (`/explain`): narrated, animated stories for ages 3–5, ages 15–20 and seniors, plus "why this data matters", with a quiz.
 
@@ -101,6 +130,11 @@ src/
   lib/analytics.ts     emerging hot spots, season timing, outlook + hindcast
   lib/global.ts        country analyses and the 1° world grid
   lib/science.ts       ENSO link, fire intensity, fire regime
+  lib/harmonize2.ts    v2 transfer, uncertainty, blind validation
+  lib/detection.ts     MODIS detection probability from matchups
+  lib/drift.ts         Terra/Aqua orbit drift
+  lib/emissions.ts     diurnal cycle, FRE, dry matter, emissions
+  lab/                 Harmonization Lab page
   components/          maps, sidebar, insight tabs, analyst, tour
   explain/             animated stories page
 server/
@@ -109,7 +143,9 @@ server/
   openrouter.ts        OpenRouter client with budget ledger
   context.ts           grounding facts for the model
   offline.ts           free offline analyst
-pipeline/              FIRMS fetch + ingest, global per-year + merge, live feed, ONI
+pipeline/              FIRMS fetch + ingest, global per-year (+ matchups) and merge, science products,
+                       dataset export (Python), Zenodo/Kaggle publishing, live feed, ONI
+docs/                  ATBD, dataset card, publishing guide, quickstart notebook
 tests/                 node:test checks on the harmonization
 ```
 
@@ -120,7 +156,6 @@ React 19 + Vite, Tailwind CSS v4, Framer Motion, Leaflet + d3-geo, Recharts, jsP
 ## Known limitations
 
 - The record starts in 2003: 2001 to mid-2002 had only Terra (no Aqua) and is left out.
-- Country records use one k per country; the 1° world grid uses one global k.
 - The ENSO test uses about 20 seasons, so only strong links reach significance.
-- k is one factor per area. A per-season or per-land-cover calibration would be more accurate.
+- The v2 transfer assumes the MODIS/VIIRS relation per area and season in 2003–2011 matches 2013–2021; the intervals and blind test quantify how well that holds. A per-season or per-land-cover calibration would be more accurate.
 - The AI analyst can still make mistakes. Briefs carry an "AI-generated, verify before operational use" note.
