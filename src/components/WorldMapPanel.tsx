@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { DARK_BASE, LABELS } from "../lib/basemaps";
 import L from "leaflet";
 import { Box, Crosshair, Pause, Play, Radio } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -183,7 +184,7 @@ export function WorldMapPanel(p: Props) {
 
       <div className="relative min-h-0 flex-1">
         <MapContainer center={[15, 20]} zoom={2} minZoom={2} maxZoom={9} zoomControl={false} worldCopyJump={false} maxBounds={[[-85, -200], [85, 200]]} className="absolute inset-0 h-full w-full" attributionControl>
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png" subdomains="abcd" attribution="© OSM © CARTO · Fire data: NASA FIRMS" />
+          <TileLayer url={DARK_BASE.url} maxNativeZoom={DARK_BASE.max} attribution={`${DARK_BASE.attr} · Labels: NASA GIBS · Fire data: NASA FIRMS`} />
           <ImageOverlay url={url} bounds={[[-MERC_MAX, -180], [MERC_MAX, 180]]} opacity={0.95} className="fc-pixelated" zIndex={300} />
           {atlas && (
             <GeoJSON
@@ -202,7 +203,7 @@ export function WorldMapPanel(p: Props) {
               }}
             />
           )}
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png" subdomains="abcd" opacity={0.6} zIndex={650} />
+          <TileLayer url={LABELS.url} maxNativeZoom={LABELS.max} opacity={0.7} zIndex={650} />
           <FitBBox bbox={p.bbox} world={!p.selected} />
           <Hover
             onMove={(lat, lon, x, y) => {

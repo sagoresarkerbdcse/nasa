@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { DARK_BASE, FEATURES, GIBS, LABELS } from "../lib/basemaps";
 import L from "leaflet";
 import { Box, Crosshair, Layers, Pause, Play, Radio, Satellite, SquareDashedMousePointer, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -57,7 +58,6 @@ const VIEWS: { id: SensorView; label: string; sub: string }[] = [
 ];
 
 type Basemap = "black" | "blue" | "true" | "dark";
-const GIBS = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best";
 const BASEMAPS: { id: Basemap; label: string }[] = [
   { id: "black", label: "Black Marble" },
   { id: "true", label: "True Color" },
@@ -77,7 +77,7 @@ function basemapLayer(b: Basemap, year: number, month: number | null, viirsStart
       return { url: `${GIBS}/${layer}/default/${date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, max: 9, attr: `NASA GIBS · ${year >= viirsStart ? "VIIRS" : "MODIS Terra"} true color ${date}` };
     }
     default:
-      return { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", max: 18, attr: "© OSM © CARTO" };
+      return DARK_BASE;
   }
 }
 
@@ -196,10 +196,10 @@ export function MapPanel(p: Props) {
             maxNativeZoom={base.max}
             maxZoom={12}
             attribution={`${base.attr} · Fire data: NASA FIRMS`}
-            subdomains="abcd"
             eventHandlers={tileHandlers}
           />
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png" subdomains="abcd" opacity={0.75} zIndex={650} />
+          <TileLayer url={FEATURES.url} maxNativeZoom={FEATURES.max} maxZoom={12} opacity={0.45} zIndex={640} attribution="Labels: NASA GIBS / © OpenStreetMap" />
+          <TileLayer url={LABELS.url} maxNativeZoom={LABELS.max} maxZoom={12} opacity={0.85} zIndex={650} />
           <FitToBBox bbox={bbox} />
           <ZoomControl />
           <MouseCoords target={coordRef} />
