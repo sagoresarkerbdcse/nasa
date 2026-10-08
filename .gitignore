@@ -4,3 +4,6 @@ pipeline/raw
 .env
 *.log
 .firecal
+dataset-build/
+dataset-out/
+global-out/

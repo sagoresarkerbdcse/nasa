@@ -9,6 +9,17 @@ on:
       from_run:
         description: Re-merge the per-year outputs of an earlier run (run id) instead of downloading FIRMS again
         default: ""
+      dataset_version:
+        description: Version of the open dataset package (e.g. 1.0.0)
+        default: "1.0.0"
+      release:
+        description: Publish the dataset as a GitHub release (Zenodo archives releases and mints a DOI once the repo is enabled there)
+        type: boolean
+        default: false
+      kaggle:
+        description: Upload the dataset to Kaggle (needs KAGGLE_USERNAME and KAGGLE_KEY secrets)
+        type: boolean
+        default: false
       years:
         description: JSON array of years
         default: "[2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024]"
@@ -70,6 +81,8 @@ jobs:
           run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
       - run: npx tsx pipeline/global-merge.ts global-out
+        env:
+          DATASET_DIR: dataset-build
       - name: Commit
         run: |
           git config user.name "firecal-data-bot"
@@ -83,3 +96,35 @@ jobs:
           if git diff --cached --quiet; then echo "No data changes."; exit 0; fi
           git commit -m "data: refresh global"
           git push origin HEAD:main
+      # --- Open dataset: NetCDF, COG, CSV, STAC, docs ------------------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q xarray netCDF4 rasterio
+      - name: Package dataset
+        run: |
+          VER="${{ inputs.dataset_version || '1.0.0' }}"
+          python pipeline/export_dataset.py dataset-build dataset-out/firecal-harmonized-active-fire "$VER"
+          cd dataset-out && zip -qr "firecal-harmonized-active-fire-v$VER.zip" firecal-harmonized-active-fire && ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firecal-dataset
+          path: dataset-out/*.zip
+          retention-days: 90
+      - name: GitHub release
+        if: ${{ inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ inputs.dataset_version || '1.0.0' }}"
+          gh release create "dataset-v$VER" "dataset-out/firecal-harmonized-active-fire-v$VER.zip" \
+            --title "FireCal Harmonized Active Fire dataset v$VER" \
+            --notes "Harmonized MODIS→VIIRS active-fire record (NASA FIRMS), monthly 1° grid and per-country tables with 90% intervals, fire energy and emissions, detection and orbit-drift analyses. See README.md and ATBD.md inside the zip. CC BY 4.0."
+      - name: Kaggle
+        if: ${{ inputs.kaggle }}
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -q kaggle
+          python pipeline/publish_kaggle.py dataset-out/firecal-harmonized-active-fire "${{ inputs.dataset_version || '1.0.0' }}"
