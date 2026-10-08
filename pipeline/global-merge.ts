@@ -98,5 +98,14 @@ const meta = {
   sources: Object.fromEntries(years.map((y) => [y.year, y.sources])),
 };
 writeFileSync(join(outDir, "countries.json"), JSON.stringify({ meta, world, countries }));
+// Compact per-year inputs for the harmonization model (satellite split, overpass times, matchups).
+writeFileSync(
+  join(outDir, "harmonization-inputs.json"),
+  JSON.stringify({
+    firstYear,
+    lastYear,
+    years: years.map((y) => ({ year: y.year, sat: y.sat ?? null, lst: y.lst ?? null, match: y.match ?? null, matchCountry: y.matchCountry ?? null, matchDt: y.matchDt ?? null })),
+  }),
+);
 writeFileSync(join(outDir, "grid1.json"), JSON.stringify({ meta: { firstYear, lastYear, cellSize: 1, kWorld: meta.kWorld }, ids, yearly, clim }));
 console.log(`countries.json: ${countries.length} countries; grid1.json: ${ids.length} cells; k(world) = ${meta.kWorld}`);
