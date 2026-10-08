@@ -5,7 +5,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fitUnit, predict, predictAnnual, type Series, type UnitModel } from "../src/lib/harmonize2";
+import { fitUnit, gapAdjust, predict, predictAnnual, viirsCompleteness, type Series, type UnitModel } from "../src/lib/harmonize2";
 import type { EmissionsFile, HarmonizationFile } from "./harmonization-build";
 import { trainYears } from "./harmonization-build";
 
@@ -50,23 +50,30 @@ export function writeDatasetTables(dir: string, inp: Input) {
       for (let m = 0; m < 12; m++) {
         const i = (y - firstYear) * 12 + m;
         const d = (f: number) => u.data[i * NF + f];
-        const p = viirs ? null : predict(model, d(2), m);
-        monthly.push([u.name, y, m + 1, d(2), d(3), p ? r1(p.v) : d(3), p ? r1(p.lo) : "", p ? r1(p.hi) : "", viirs ? "viirs_observed" : "modis_harmonized", d(0), d(1), d(6), d(7), d(8), d(9)]);
+        const q = viirs ? viirsCompleteness(y, m) : undefined;
+        const p = viirs ? (q ? gapAdjust(d(3), q) : null) : predict(model, d(2), m);
+        monthly.push([u.name, y, m + 1, d(2), d(3), p ? r1(p.v) : d(3), p ? r1(p.lo) : "", p ? r1(p.hi) : "", q ? "viirs_gap_adjusted" : viirs ? "viirs_observed" : "modis_harmonized", d(0), d(1), d(6), d(7), d(8), d(9)]);
       }
       const b = (y - firstYear) * 12;
       const mods = Array.from({ length: 12 }, (_, m) => u.data[(b + m) * NF + 2]);
-      const vSum = Array.from({ length: 12 }, (_, m) => u.data[(b + m) * NF + 3]).reduce((a, c) => a + c, 0);
-      const pa = viirs ? null : predictAnnual(model, mods);
+      const vAdj = Array.from({ length: 12 }, (_, m) => {
+        const v = u.data[(b + m) * NF + 3];
+        const q = viirs ? viirsCompleteness(y, m) : undefined;
+        return q ? gapAdjust(v, q) : { v, lo: v, hi: v };
+      });
+      const vSum = r1(vAdj.reduce((a, c) => a + c.v, 0));
+      const gapYear = viirs && vAdj.some((_, m) => viirsCompleteness(y, m));
+      const pa = viirs ? (gapYear ? { v: vSum, lo: vAdj.reduce((a, c) => a + c.lo, 0), hi: vAdj.reduce((a, c) => a + c.hi, 0) } : null) : predictAnnual(model, mods);
       const e = emYears?.[y - firstYear];
       annual.push([
         u.name,
         y,
         mods.reduce((a, c) => a + c, 0),
-        vSum,
+        Array.from({ length: 12 }, (_, m) => u.data[(b + m) * NF + 3]).reduce((a, c) => a + c, 0),
         pa ? r1(pa.v) : vSum,
         pa ? r1(pa.lo) : "",
         pa ? r1(pa.hi) : "",
-        viirs ? "viirs_observed" : "modis_harmonized",
+        gapYear ? "viirs_gap_adjusted" : viirs ? "viirs_observed" : "modis_harmonized",
         ...(e ? e.slice(0, 13) : new Array(13).fill("")),
       ]);
     }
@@ -128,7 +135,13 @@ export function writeDatasetTables(dir: string, inp: Input) {
     const u = inp.cellsV2.models.get(id)!;
     for (let i = 0; i < nY * 12; i++) {
       const y = firstYear + Math.floor(i / 12);
-      if (y >= 2012) {
+      const q = y >= 2012 ? viirsCompleteness(y, i % 12) : undefined;
+      if (q) {
+        const g = gapAdjust(s.V[i], q);
+        monthlyGrid.push(r1(g.v));
+        monthlyLo.push(r1(g.lo));
+        monthlyHi.push(r1(g.hi));
+      } else if (y >= 2012) {
         monthlyGrid.push(s.V[i]);
         monthlyLo.push(-1);
         monthlyHi.push(-1);
@@ -140,7 +153,7 @@ export function writeDatasetTables(dir: string, inp: Input) {
       }
     }
   }
-  writeFileSync(join(dir, "grid_1deg_monthly.json"), JSON.stringify({ firstYear, lastYear, ids: inp.ids, values: monthlyGrid, lo: monthlyLo, hi: monthlyHi }));
+  writeFileSync(join(dir, "grid_1deg_monthly.json"), JSON.stringify({ firstYear, lastYear, ids: inp.ids, values: monthlyGrid, lo: monthlyLo, hi: monthlyHi, gapMonths: inp.harmonization.sensorGaps.viirs.map((g) => [g.year, g.month, g.completeness]) }));
 
   // --- model, validation, detection, drift ------------------------------------------
   writeFileSync(join(dir, "harmonization_model.json"), JSON.stringify(inp.harmonization, null, 1));

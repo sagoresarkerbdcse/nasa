@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { fitDetection, idx } from "../src/lib/detection";
 import { passTime } from "../src/lib/drift";
 import { dailyFactor, diurnalAt, fitDiurnal } from "../src/lib/emissions";
-import { blindTest, fitUnit, predict, type Series } from "../src/lib/harmonize2";
+import { blindTest, detectSensorGaps, fitUnit, gapAdjust, predict, setSensorGaps, viirsCompleteness, type Series } from "../src/lib/harmonize2";
 
 const FIRST = 2003;
 const LAST = 2024;
@@ -101,4 +101,21 @@ test("diurnal fit reproduces an afternoon peak and a sensible daily factor", () 
   for (const s of samples) assert.ok(Math.abs(diurnalAt(g, s.t) - s.v) < 0.05);
   const f = dailyFactor(g, 13.5);
   assert.ok(f > 4 && f < 12, `daily factor ${f} h`);
+});
+
+test("sensor outages are found from the world VIIRS/MODIS ratio", () => {
+  const s = synth(new Array(12).fill(2.5), 0, 21, 0.03);
+  const V = Array.from(s.V as ArrayLike<number>);
+  const M = Array.from(s.M as ArrayLike<number>);
+  V[(2022 - FIRST) * 12 + 7] *= 0.6; // VIIRS outage, August 2022
+  M[(2019 - FIRST) * 12 + 3] *= 0.5; // MODIS outage, April 2019
+  const g = detectSensorGaps({ M, V }, FIRST, LAST);
+  assert.deepEqual(g.viirs.map((x) => [x.year, x.month]), [[2022, 8]]);
+  assert.ok(Math.abs(g.viirs[0].completeness - 0.6) < 0.06, `completeness ${g.viirs[0].completeness}`);
+  assert.deepEqual(g.modis.map((x) => [x.year, x.month]), [[2019, 4]]);
+  setSensorGaps(g);
+  assert.ok(viirsCompleteness(2022, 7)! < 0.7 && viirsCompleteness(2022, 6) === undefined);
+  const adj = gapAdjust(600, 0.6);
+  assert.ok(Math.abs(adj.v - 1000) < 1e-9 && adj.lo >= 600 && adj.hi > 1000);
+  setSensorGaps(null);
 });

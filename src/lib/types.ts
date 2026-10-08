@@ -73,6 +73,8 @@ export interface MonthStat {
   /** 90% interval of the harmonized value (MODIS-only months; observed VIIRS months have none). */
   lo?: number;
   hi?: number;
+  /** VIIRS completeness (< 1) when a VIIRS outage hit this month; the value is scaled up by it. */
+  gap?: number;
   /** Harmonized Confidence Index, 0-100. */
   hci: number;
   /** VIIRS raw / MODIS raw detection ratio (null when MODIS saw nothing). */

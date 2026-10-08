@@ -9,7 +9,7 @@
  */
 import { ehsa, summarizeHotspots, type CellHotspot } from "./analytics";
 import { analyzeSeries, emptyAcc, mannKendall, rootModel, type Acc, type SeriesMeta } from "./harmonize";
-import type { UnitModel } from "./harmonize2";
+import { detectSensorGaps, setSensorGaps, type SensorGaps, type UnitModel } from "./harmonize2";
 import type { AoiAnalysis, BBox, GridFile, TrendResult } from "./types";
 
 export const NF = 10;
@@ -61,6 +61,19 @@ export function toAcc(data: number[]): Acc[] {
   return out;
 }
 
+const gapCache = new WeakMap<CountriesFile, SensorGaps>();
+/** VIIRS/MODIS outages detected from the world record (and registered for all analyses). */
+export function sensorGapsOf(cf: CountriesFile): SensorGaps {
+  let g = gapCache.get(cf);
+  if (!g) {
+    const n = cf.world.length / NF;
+    g = detectSensorGaps({ M: Array.from({ length: n }, (_, i) => cf.world[i * NF + 2]), V: Array.from({ length: n }, (_, i) => cf.world[i * NF + 3]) }, cf.meta.firstYear, cf.meta.lastYear);
+    gapCache.set(cf, g);
+    setSensorGaps(g);
+  }
+  return g;
+}
+
 const worldCache = new WeakMap<CountriesFile, UnitModel>();
 /** Root of the country hierarchy: the world's own v2 model. */
 export function worldModel(cf: CountriesFile): UnitModel {
@@ -78,6 +91,7 @@ export function analyzeCountry(cf: CountriesFile, name: string | null): AoiAnaly
   const key = `${cf.meta.generatedAt}|${name ?? "__world"}`;
   const hit = analysisCache.get(key);
   if (hit) return hit;
+  sensorGapsOf(cf);
   const c = name ? cf.countries.find((x) => x.name === name) : null;
   const data = c ? c.data : cf.world;
   const a = analyzeSeries(toAcc(data), seriesMeta(cf), { bbox: c?.bbox ?? WORLD_BBOX, cellCount: 0, parent: () => worldModel(cf) });

@@ -9,7 +9,7 @@
 import { fitDetection, type DetectionModel } from "../src/lib/detection";
 import { analyzeDrift, NS, passTime, type DriftResult } from "../src/lib/drift";
 import { NOMINAL_PASSES, unitEmissions, type EmissionYear, type PassTimes } from "../src/lib/emissions";
-import { DEFAULT_TRAIN_YEARS, blindTest, fitUnit, predict, predictAnnual, type Fold, type Series, type UnitModel } from "../src/lib/harmonize2";
+import { DEFAULT_TRAIN_YEARS, blindTest, detectSensorGaps, fitUnit, gapAdjust, predict, predictAnnual, setSensorGaps, viirsCompleteness, type Fold, type SensorGaps, type Series, type UnitModel } from "../src/lib/harmonize2";
 import type { YearOutput } from "./global-year";
 
 const NF = 10;
@@ -54,6 +54,8 @@ export interface HarmonizationFile {
   kByYear: { year: number; k: number }[];
   detection: (DetectionModel & { byYear: { year: number; p: number; objects: number }[] }) | null;
   drift: DriftResult | null;
+  /** VIIRS and MODIS outages detected from the world record */
+  sensorGaps: SensorGaps;
   /** countries with the most overlap evidence: their seasonal k and floor (for the lab view) */
   countries: { name: string; kAnnual: number; k: number[]; floor: number[]; sigma: number; evidence: number }[];
 }
@@ -62,6 +64,8 @@ export function buildHarmonization(years: YearOutput[], countries: CountryRow[],
   const train = trainYears(firstYear, lastYear);
   const units = countries.map((c) => seriesFromCountry(c.data));
   const worldS = seriesFromCountry(world);
+  const sensorGaps = detectSensorGaps(worldS, firstYear, lastYear, train);
+  setSensorGaps(sensorGaps);
   const root = rootOf(worldS, firstYear, train);
 
   // Blind validation folds.
@@ -120,6 +124,7 @@ export function buildHarmonization(years: YearOutput[], countries: CountryRow[],
     trainYears: train,
     world: root,
     validation,
+    sensorGaps,
     kByYear,
     detection,
     drift,
@@ -177,10 +182,18 @@ export function harmonizeCells(years: YearOutput[], ids: number[], firstYear: nu
       const b = (yr - firstYear) * 12;
       if (yr >= 2012) {
         let v = 0;
-        for (let m = 0; m < 12; m++) v += s.V[b + m];
+        let lo = 0;
+        let hi = 0;
+        for (let m = 0; m < 12; m++) {
+          const q = viirsCompleteness(yr, m);
+          const g = q ? gapAdjust(s.V[b + m], q) : { v: s.V[b + m], lo: s.V[b + m], hi: s.V[b + m] };
+          v += g.v;
+          lo += g.lo;
+          hi += g.hi;
+        }
         yearly.push(Math.round(v));
-        yearlyLo.push(Math.round(v));
-        yearlyHi.push(Math.round(v));
+        yearlyLo.push(Math.round(lo));
+        yearlyHi.push(Math.round(hi));
       } else {
         const p = predictAnnual(u, Array.from({ length: 12 }, (_, m) => s.M[b + m]));
         yearly.push(Math.round(p.v));
@@ -194,7 +207,8 @@ export function harmonizeCells(years: YearOutput[], ids: number[], firstYear: nu
       let n = 0;
       for (let yr = Math.max(firstYear, lastYear - 9); yr <= lastYear; yr++) {
         const i = (yr - firstYear) * 12 + m;
-        sum += yr >= 2012 ? s.V[i] : predict(u, s.M[i], m).v;
+        const q = yr >= 2012 ? viirsCompleteness(yr, m) : undefined;
+        sum += yr >= 2012 ? (q ? s.V[i] / q : s.V[i]) : predict(u, s.M[i], m).v;
         n++;
       }
       clim.push(Math.round((sum / Math.max(n, 1)) * 10) / 10);

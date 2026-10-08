@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fetchLive } from "../pipeline/live";
 import type { BBox, GridFile, LiveFile } from "../src/lib/types";
-import { analyzeCountry, pseudoMeta, summarizeCountries, type CountriesFile, type Grid1File } from "../src/lib/global";
+import { sensorGapsOf, analyzeCountry, pseudoMeta, summarizeCountries, type CountriesFile, type Grid1File } from "../src/lib/global";
 import { buildGrounding, type Focus } from "./context";
 import { offlineAgent } from "./offline";
 import { BudgetExceeded, OPENROUTER, budgetStatus, runOpenRouter, withinBudget } from "./openrouter";
@@ -39,6 +39,7 @@ const global = (() => {
   const g = join(dataDir, "global/grid1.json");
   if (!existsSync(c) || !existsSync(g)) return null;
   const cf = JSON.parse(readFileSync(c, "utf8")) as CountriesFile;
+  sensorGapsOf(cf); // VIIRS outages → gap-adjusted months in every analysis
   return { cf, g1: JSON.parse(readFileSync(g, "utf8")) as Grid1File, summaries: summarizeCountries(cf) };
 })();
 

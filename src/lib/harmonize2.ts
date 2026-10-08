@@ -327,3 +327,58 @@ export function blindTest(units: Series[], firstYear: number, train: number[], t
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const r1 = (v: number) => Math.round(v * 10) / 10;
+
+// ---------------------------------------------------------------------------
+// Sensor outages. A satellite safe-mode or data gap removes detections everywhere
+// at once, so it shows up as a drop of the world VIIRS/MODIS fire-day ratio far
+// below that calendar month's normal (or a jump far above it for a MODIS gap).
+// VIIRS months below GAP_VIIRS completeness are scaled up by it (keeping VIIRS's
+// spatial detail) and flagged; MODIS gaps are reported (the record uses VIIRS then).
+// Example: January 2012 has completeness ≈ 0.35, matching VIIRS fire data starting
+// on 20 January (12 of 31 days ≈ 0.39).
+// ---------------------------------------------------------------------------
+export const GAP_VIIRS = 0.85;
+export const GAP_MODIS = 1.35;
+
+export interface SensorGaps {
+  viirs: { year: number; month: number; completeness: number }[];
+  modis: { year: number; month: number; ratioVsNormal: number }[];
+}
+
+export function detectSensorGaps(world: Series, firstYear: number, lastYear: number, trainYears: number[] = DEFAULT_TRAIN_YEARS): SensorGaps {
+  const ratio = (y: number, m: number) => {
+    const i = (y - firstYear) * 12 + m;
+    const M = at(world.M, i);
+    return M > 0 ? at(world.V, i) / M : NaN;
+  };
+  const out: SensorGaps = { viirs: [], modis: [] };
+  for (let m = 0; m < 12; m++) {
+    const normal = median(trainYears.filter((y) => y >= firstYear && y <= lastYear).map((y) => ratio(y, m)).filter(Number.isFinite));
+    if (!Number.isFinite(normal) || normal <= 0) continue;
+    for (let y = 2012; y <= lastYear; y++) {
+      const r = ratio(y, m);
+      if (!Number.isFinite(r)) continue;
+      const q = r / normal;
+      if (q < GAP_VIIRS) out.viirs.push({ year: y, month: m + 1, completeness: Math.round(q * 1000) / 1000 });
+      else if (q > GAP_MODIS) out.modis.push({ year: y, month: m + 1, ratioVsNormal: Math.round(q * 1000) / 1000 });
+    }
+  }
+  const byTime = (a: { year: number; month: number }, b: { year: number; month: number }) => a.year - b.year || a.month - b.month;
+  out.viirs.sort(byTime);
+  out.modis.sort(byTime);
+  return out;
+}
+
+let completeness = new Map<number, number>();
+/** Register VIIRS gaps for all later analyses (browser: once the global record loads; server/pipeline: at start). */
+export function setSensorGaps(g: SensorGaps | null) {
+  completeness = new Map((g?.viirs ?? []).map((x) => [x.year * 12 + x.month - 1, x.completeness]));
+}
+/** Completeness (< 1) of VIIRS for a month, or undefined when VIIRS is complete. */
+export const viirsCompleteness = (year: number, month0: number) => completeness.get(year * 12 + month0);
+/** VIIRS value corrected for an outage, with a 90% interval (completeness uncertain by ~±10%). */
+export function gapAdjust(v: number, q: number) {
+  const adj = v / q;
+  const sd = Math.sqrt(0.06 ** 2 + 1 / (adj + 1));
+  return { v: adj, lo: Math.max(v, (adj + 1) * Math.exp(-Z90 * sd) - 1), hi: (adj + 1) * Math.exp(Z90 * sd) - 1 };
+}

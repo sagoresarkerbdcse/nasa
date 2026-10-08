@@ -16,7 +16,7 @@ import { ScopeSidebar, type Scope } from "./components/ScopeSidebar";
 import { Tour, type TourControls, type TourFacts } from "./components/Tour";
 import { WorldMapPanel } from "./components/WorldMapPanel";
 import { hindcast, hotspotsInBBox, outlook as runOutlook, seasonTiming } from "./lib/analytics";
-import { WORLD_BBOX, analyzeCountry, grid1HotspotsIn, pseudoMeta, summarizeCountries, type CountriesFile, type CountrySummary, type Grid1File } from "./lib/global";
+import { WORLD_BBOX, sensorGapsOf, analyzeCountry, grid1HotspotsIn, pseudoMeta, summarizeCountries, type CountriesFile, type CountrySummary, type Grid1File } from "./lib/global";
 import { analyzeAoi } from "./lib/harmonize";
 import { MONTHS_LONG, REGIONS, formatBBox } from "./lib/regions";
 import type { BBox, GridFile, InsightTab, LiveFile, MapLayer, MonthStat, PointsFile, SensorView } from "./lib/types";
@@ -68,6 +68,7 @@ function DashboardApp() {
         if (!a.ok || !b.ok) throw new Error("missing");
         const cf = (await a.json()) as CountriesFile;
         const g1 = (await b.json()) as Grid1File;
+        sensorGapsOf(cf); // registers VIIRS outages before any analysis re-runs
         setGlobal({ cf, g1, summaries: summarizeCountries(cf) });
         setGlobalStatus("ready");
       })

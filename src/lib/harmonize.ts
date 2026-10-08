@@ -19,7 +19,7 @@
  * 10 years (z-score + % change). Trend uses Mann-Kendall + Sen's slope on
  * annual totals.
  */
-import { DEFAULT_TRAIN_YEARS, fitUnit, predict, predictAnnual, type Series, type UnitModel } from "./harmonize2";
+import { DEFAULT_TRAIN_YEARS, fitUnit, gapAdjust, predict, predictAnnual, viirsCompleteness, type Series, type UnitModel } from "./harmonize2";
 import { RECORD_WIDTH, type AoiAnalysis, type BBox, type GridFile, type MonthStat, type SensorView, type TrendResult } from "./types";
 
 export interface Acc {
@@ -146,7 +146,9 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
     for (let mo = 1; mo <= 12; mo++) {
       const a = acc[monthIndex(grid, y, mo)];
       const viirsEra = y >= viirsStartYear;
-      const pred = viirsEra ? null : predict(model, a.modisFD, mo - 1);
+      // VIIRS era: observed, unless a VIIRS outage left the month incomplete (scaled up, flagged).
+      const q = viirsEra ? viirsCompleteness(y, mo - 1) : undefined;
+      const pred = viirsEra ? (q ? gapAdjust(a.viirsFD, q) : null) : predict(model, a.modisFD, mo - 1);
       const harmonized = pred ? pred.v : a.viirsFD;
       const naive = viirsEra ? a.viirsRaw : a.modisRaw;
       const raw = a.modisRaw + a.viirsRaw;
@@ -167,6 +169,7 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
         naive,
         harmonized: round1(harmonized),
         ...(pred ? { lo: round1(pred.lo), hi: round1(pred.hi) } : {}),
+        ...(q ? { gap: q } : {}),
         hci,
         ratio: a.modisRaw > 0 && viirsEra ? round2(a.viirsRaw / a.modisRaw) : null,
         baseline: null,
@@ -209,7 +212,7 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
     annual.push({
       year: y,
       harmonized: round1(sum(ym.map((m) => m.harmonized))),
-      ...(y < viirsStartYear ? annualInterval(model, ym) : {}),
+      ...(y < viirsStartYear ? annualInterval(model, ym) : ym.some((m) => m.gap) ? { lo: round1(sum(ym.map((m) => m.lo ?? m.harmonized))), hi: round1(sum(ym.map((m) => m.hi ?? m.harmonized))) } : {}),
       naive: sum(ym.map((m) => m.naive)),
       modisRaw: sum(ym.map((m) => m.modisRaw)),
       viirsRaw: sum(ym.map((m) => m.viirsRaw)),

@@ -69,6 +69,15 @@ Results for this release are in `model/validation.csv`. Typical values: the mont
 
 Interval coverage is close to nominal in the 2013–2021 folds (about 87–91% monthly, 89–91% annual). It drops to about 85% / 84% when testing on 2022–2024. That is consistent with the orbit drift described below, and it is why those years are not used for training.
 
+## 4.3 Sensor outages
+
+A satellite safe-mode or data gap removes detections everywhere at once. It therefore shows up in the world record as a VIIRS/MODIS fire-day ratio far from that calendar month's normal, the training-year median.
+
+* **VIIRS gaps.** Months below 85% of normal are VIIRS gaps. Every unit's VIIRS value in such a month is divided by the world completeness, which keeps VIIRS's spatial pattern. The month is flagged `viirs_gap_adjusted` (source flag 2) and given a 90% interval that includes ±6% completeness uncertainty and counting noise.
+* **MODIS gaps.** Months above 135% are MODIS gaps. They are reported; the record uses VIIRS in those years.
+* **Check.** January 2012 comes out at about 35% complete. That matches the VIIRS 375 m fire record starting on 20 January (12 of 31 days, 39%).
+* **This release.** The detected gaps are listed in `harmonization_model.json` → `sensorGaps`.
+
 ## 5. MODIS detection probability from same-overpass matchups
 
 Aqua MODIS and Suomi NPP VIIRS both cross the equator at about 13:30 local time, so in many places they observe the same fires within minutes.

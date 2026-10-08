@@ -18,7 +18,7 @@
  * so these are conservative (low) estimates. FRP-based inventories such as GFAS
  * rescale by land cover to match burned-area inventories; we do not.
  */
-import { fitUnit, predict, type UnitModel } from "./harmonize2";
+import { fitUnit, predict, viirsCompleteness, type UnitModel } from "./harmonize2";
 import { NS } from "./drift";
 
 export const COMBUSTION_KG_PER_MJ = 0.368;
@@ -163,7 +163,8 @@ export function unitEmissions(sat: number[], firstYear: number, lastYear: number
       const i = (y - firstYear) * 12 + m;
       // MW·(sum over days) × hours × 3600 s → MJ → GJ
       M[i] = (val(y, m, 6) * dailyFactor(diurnal[m], p.aquaDay) * 3600) / 1000;
-      V[i] = (val(y, m, 10) * dailyFactor(diurnal[m], p.snppDay) * 3600) / 1000;
+      // VIIRS outage months are scaled by the VIIRS completeness (see harmonize2.detectSensorGaps).
+      V[i] = (val(y, m, 10) * dailyFactor(diurnal[m], p.snppDay) * 3600) / 1000 / (viirsCompleteness(y, m) ?? 1);
     }
   const model = fitUnit({ M, V }, { firstYear, trainYears }, parent);
 

@@ -365,8 +365,55 @@ export default function LabPage() {
           </Card>
         )}
 
+        {h?.sensorGaps && (h.sensorGaps.viirs.length > 0 || h.sensorGaps.modis.length > 0) && (
+          <Card icon={<Radar className="h-4 w-4" />} kicker="5 · Sensor outages" title="Gaps in the satellite record, found and corrected">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <div className="eyebrow mb-1.5 !text-[9.5px]">VIIRS months that are incomplete (corrected)</div>
+                <table className="w-full text-left text-[12px]">
+                  <tbody>
+                    {h.sensorGaps.viirs.map((g) => (
+                      <tr key={`${g.year}-${g.month}`} className="border-b border-white/[0.05]">
+                        <td className="py-1.5 font-mono text-slate-200">
+                          {g.year}-{String(g.month).padStart(2, "0")}
+                        </td>
+                        <td className="py-1.5 text-slate-300">{Math.round(g.completeness * 100)}% of normal</td>
+                        <td className="py-1.5 text-right font-mono text-[11px] text-slate-500">×{(1 / g.completeness).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <div className="eyebrow mb-1.5 !text-[9.5px]">MODIS months that are incomplete (reported)</div>
+                <table className="w-full text-left text-[12px]">
+                  <tbody>
+                    {h.sensorGaps.modis.map((g) => (
+                      <tr key={`${g.year}-${g.month}`} className="border-b border-white/[0.05]">
+                        <td className="py-1.5 font-mono text-slate-200">
+                          {g.year}-{String(g.month).padStart(2, "0")}
+                        </td>
+                        <td className="py-1.5 text-slate-300">VIIRS/MODIS ratio {g.ratioVsNormal.toFixed(2)}× normal</td>
+                      </tr>
+                    ))}
+                    {!h.sensorGaps.modis.length && (
+                      <tr>
+                        <td className="py-1.5 text-slate-500">none detected</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <P>
+              A satellite safe mode or data gap removes detections everywhere at once, so it shows up as a world VIIRS/MODIS ratio far from that calendar month's normal (below {Math.round(0.85 * 100)}% or above 135%). Incomplete VIIRS months are scaled up by their completeness, which keeps
+              VIIRS's spatial detail, and carry a wider interval. A raw record would show them as sudden fire declines. January 2012 is a check: VIIRS fire data start on 20 January, so about 12 of 31 days (39%) are expected.
+            </P>
+          </Card>
+        )}
+
         {em && (
-          <Card icon={<Wind className="h-4 w-4" />} kicker="5 · Fire energy and emissions" title="From fire radiative power to CO₂ and smoke">
+          <Card icon={<Wind className="h-4 w-4" />} kicker="6 · Fire energy and emissions" title="From fire radiative power to CO₂ and smoke">
             <div className="grid gap-4 md:grid-cols-2">
               {(
                 [
@@ -418,7 +465,7 @@ export default function LabPage() {
           </Card>
         )}
 
-        <Card icon={<FlaskConical className="h-4 w-4" />} kicker="6 · Open data" title="Use it, cite it">
+        <Card icon={<FlaskConical className="h-4 w-4" />} kicker="7 · Open data" title="Use it, cite it">
           <div className="grid gap-3 md:grid-cols-3">
             {[
               { href: `${REPO}/releases`, title: "Full dataset", body: "NetCDF (monthly 1°, with 90% intervals), Cloud-Optimized GeoTIFFs, STAC catalog, CSV tables, notebook" },

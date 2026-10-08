@@ -81,7 +81,8 @@ def main():
     fd_lo = grid(lo, np.nan)
     fd_hi = grid(hi, np.nan)
     time = np.array([np.datetime64(f"{y0 + i // 12}-{i % 12 + 1:02d}-01") for i in range(nt)], dtype="datetime64[ns]")
-    source = np.array([0 if (y0 + i // 12) < 2012 else 1 for i in range(nt)], dtype=np.int8)
+    gap_months = {(int(y), int(m)) for y, m, _ in g.get("gapMonths", [])}
+    source = np.array([0 if (y0 + i // 12) < 2012 else (2 if (y0 + i // 12, i % 12 + 1) in gap_months else 1) for i in range(nt)], dtype=np.int8)
 
     attrs = {
         "Conventions": "CF-1.8, ACDD-1.3",
@@ -110,9 +111,9 @@ def main():
     ds = xr.Dataset(
         {
             "harmonized_fire_days": (("time", "lat", "lon"), fd, var_attrs),
-            "harmonized_fire_days_lo90": (("time", "lat", "lon"), fd_lo, {"units": "1", "long_name": "5th percentile of the harmonized value (MODIS-harmonized months only)"}),
-            "harmonized_fire_days_hi90": (("time", "lat", "lon"), fd_hi, {"units": "1", "long_name": "95th percentile of the harmonized value (MODIS-harmonized months only)"}),
-            "source_flag": (("time",), source, {"long_name": "data source", "flag_values": np.array([0, 1], dtype=np.int8), "flag_meanings": "modis_harmonized viirs_observed"}),
+            "harmonized_fire_days_lo90": (("time", "lat", "lon"), fd_lo, {"units": "1", "long_name": "5th percentile of the harmonized value (MODIS-harmonized and VIIRS gap-adjusted months)"}),
+            "harmonized_fire_days_hi90": (("time", "lat", "lon"), fd_hi, {"units": "1", "long_name": "95th percentile of the harmonized value (MODIS-harmonized and VIIRS gap-adjusted months)"}),
+            "source_flag": (("time",), source, {"long_name": "data source", "flag_values": np.array([0, 1, 2], dtype=np.int8), "flag_meanings": "modis_harmonized viirs_observed viirs_gap_adjusted"}),
         },
         coords={
             "time": ("time", time, {"standard_name": "time", "long_name": "first day of month"}),
