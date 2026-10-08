@@ -6,11 +6,13 @@
  * (FRP) and the size of the MODIS pixel at that spot, how many there were and how
  * many Aqua MODIS also detected.
  *
- * Model (binomial logistic regression, IRLS):
- *   logit P(MODIS detects) = b0 + b1·log2 FRP + b2·ln(pixel area) + b3·night
- *                            + b4·log2 FRP × ln(pixel area) + latitude-band offsets
- * Headline numbers: FRP50, the fire power at which MODIS detects half of the fires
- * VIIRS sees, at nadir and at the swath edge, by day and by night.
+ * Model (binomial, Fisher scoring):
+ *   P(MODIS detects) = ceiling[day/night, pixel class] × sigmoid(η)
+ *   η = b0 + b1·log2 FRP + b2·ln(pixel area) + b3·night + b4·log2 FRP × ln(pixel area)
+ *       + b5·night × log2 FRP + latitude-band offsets
+ * Headline numbers: FRP50, the fire power at which MODIS detects half as many of the fires
+ * VIIRS sees as it does for the largest fires (the logistic midpoint, below the ceiling),
+ * at nadir and at the swath edge, by day and by night.
  */
 
 export const LAT_BANDS = [-23.5, 0, 23.5, 50];
@@ -37,6 +39,8 @@ export interface DetectionModel {
   overall: number;
   /** by latitude band */
   byBand: { band: string; objects: number; detected: number; p: number }[];
+  /** upper limit of the matched share for the biggest fires (matchup efficiency) by pixel class */
+  ceiling: { night: boolean; pix: string; value: number }[];
   /** deviance-based pseudo R² (McFadden) */
   pseudoR2: number;
   dtHistogram: number[];
@@ -45,11 +49,11 @@ export interface DetectionModel {
 function features(band: number, night: number, f: number, p: number) {
   const x1 = Math.log2(frpMid(f));
   const x2 = Math.log(pixMid[p]);
-  const row = [1, x1, x2, night, x1 * x2];
+  const row = [1, x1, x2, night, x1 * x2, night * x1];
   for (let b = 1; b < NB; b++) row.push(band === b ? 1 : 0);
   return row;
 }
-export const COEF_NAMES = ["intercept", "log2 FRP", "ln pixel area", "night", "log2 FRP × ln pixel area", ...LAT_BAND_LABELS.slice(1).map((l) => `band: ${l}`)];
+export const COEF_NAMES = ["intercept", "log2 FRP", "ln pixel area", "night", "log2 FRP × ln pixel area", "night × log2 FRP", ...LAT_BAND_LABELS.slice(1).map((l) => `band: ${l}`)];
 
 function solve(A: number[][], b: number[]) {
   const n = b.length;
@@ -77,37 +81,72 @@ const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 
 /** Fit the detection model to a summed matchup table (MATCH_CELLS × [coObserved, detected]). */
 export function fitDetection(table: number[], dtHistogram: number[] = []): DetectionModel {
-  const rows: { x: number[]; n: number; d: number }[] = [];
+  const rows: { x: number[]; n: number; d: number; cell: number }[] = [];
   for (let band = 0; band < NB; band++)
     for (let night = 0; night < 2; night++)
       for (let f = 0; f < NFRP; f++)
         for (let p = 0; p < NPIX; p++) {
           const i = idx(band, night, f, p);
           const n = table[i * 2] ?? 0;
-          if (n > 0) rows.push({ x: features(band, night, f, p), n, d: table[i * 2 + 1] ?? 0 });
+          if (n > 0) rows.push({ x: features(band, night, f, p), n, d: table[i * 2 + 1] ?? 0, cell: night * NPIX + p });
         }
   const k = COEF_NAMES.length;
-  let beta = new Array(k).fill(0);
-  let info: number[][] = [];
-  for (let it = 0; it < 30; it++) {
-    const H = Array.from({ length: k }, () => new Array(k).fill(0));
-    const g = new Array(k).fill(0);
+  // P = ceiling[day/night, pixel class] × sigmoid(xβ). The ceiling (< 1) absorbs matchup losses
+  // that do not depend on fire power — geolocation and timing offsets, and objects counted as
+  // co-observed that lay just outside the Aqua swath (most common for swath-edge pixels) — so the
+  // sigmoid describes sensitivity to fire power alone. β by Fisher scoring for fixed ceilings;
+  // ceilings by profile likelihood (grid 0.30–1.00), coordinate-wise.
+  const nightOf = (r: { cell: number }) => r.cell;
+  const fitBeta = (ceil: number[], start: number[]) => {
+    let beta = [...start];
+    let info: number[][] = [];
+    for (let it = 0; it < 40; it++) {
+      const H = Array.from({ length: k }, () => new Array(k).fill(0));
+      const g = new Array(k).fill(0);
+      for (const r of rows) {
+        const c = ceil[nightOf(r)];
+        const s0 = sigmoid(r.x.reduce((acc, v, j) => acc + v * beta[j], 0));
+        const mu = Math.min(1 - 1e-9, Math.max(1e-9, c * s0));
+        const dmu = c * s0 * (1 - s0);
+        const vr = mu * (1 - mu);
+        const w = (r.n * dmu * dmu) / vr;
+        const sc = ((r.d - r.n * mu) * dmu) / vr;
+        for (let a = 0; a < k; a++) {
+          g[a] += r.x[a] * sc;
+          for (let b = 0; b < k; b++) H[a][b] += w * r.x[a] * r.x[b];
+        }
+      }
+      for (let a = 0; a < k; a++) H[a][a] += 1e-8;
+      const step = solve(H, g);
+      beta = beta.map((v, j) => v + step[j]);
+      info = H;
+      if (Math.max(...step.map(Math.abs)) < 1e-7) break;
+    }
+    let ll = 0;
     for (const r of rows) {
-      const mu = Math.min(1 - 1e-9, Math.max(1e-9, sigmoid(r.x.reduce((s, v, j) => s + v * beta[j], 0))));
-      const w = r.n * mu * (1 - mu);
-      for (let a = 0; a < k; a++) {
-        g[a] += r.x[a] * (r.d - r.n * mu);
-        for (let b = 0; b < k; b++) H[a][b] += w * r.x[a] * r.x[b];
+      const mu = Math.min(1 - 1e-9, Math.max(1e-9, ceil[nightOf(r)] * sigmoid(r.x.reduce((acc, v, j) => acc + v * beta[j], 0))));
+      ll += r.d * Math.log(mu) + (r.n - r.d) * Math.log(1 - mu);
+    }
+    return { beta, info, ll };
+  };
+  let ceil = new Array(2 * NPIX).fill(1);
+  let best = fitBeta(ceil, new Array(k).fill(0));
+  for (let round = 0; round < 2; round++)
+    for (let side = 0; side < 2 * NPIX; side++) {
+      if (!rows.some((r) => r.cell === side)) continue;
+      for (let c = 0.3; c <= 1.0001; c += 0.02) {
+        const tryCeil = ceil.map((v, i) => (i === side ? Math.min(1, c) : v));
+        const f = fitBeta(tryCeil, best.beta);
+        if (f.ll > best.ll + 1e-9) {
+          best = f;
+          ceil = tryCeil;
+        }
       }
     }
-    for (let a = 0; a < k; a++) H[a][a] += 1e-8;
-    const step = solve(H, g);
-    beta = beta.map((v, j) => v + step[j]);
-    info = H;
-    if (Math.max(...step.map(Math.abs)) < 1e-7) break;
-  }
+  const beta = best.beta;
+  const info = best.info;
   const cov = invert(info);
-  const predictP = (band: number, night: number, f: number, p: number) => sigmoid(features(band, night, f, p).reduce((s, v, j) => s + v * beta[j], 0));
+  const predictP = (band: number, night: number, f: number, p: number) => ceil[night * NPIX + p] * sigmoid(features(band, night, f, p).reduce((s, v, j) => s + v * beta[j], 0));
 
   // Deviance vs the intercept-only model.
   let nObjects = 0;
@@ -120,7 +159,7 @@ export function fitDetection(table: number[], dtHistogram: number[] = []): Detec
   let ll = 0;
   let ll0 = 0;
   for (const r of rows) {
-    const mu = Math.min(1 - 1e-9, Math.max(1e-9, sigmoid(r.x.reduce((s, v, j) => s + v * beta[j], 0))));
+    const mu = Math.min(1 - 1e-9, Math.max(1e-9, ceil[nightOf(r)] * sigmoid(r.x.reduce((s, v, j) => s + v * beta[j], 0))));
     ll += r.d * Math.log(mu) + (r.n - r.d) * Math.log(1 - mu);
     ll0 += r.d * Math.log(Math.max(p0, 1e-9)) + (r.n - r.d) * Math.log(Math.max(1 - p0, 1e-9));
   }
@@ -150,9 +189,9 @@ export function fitDetection(table: number[], dtHistogram: number[] = []): Detec
   for (const night of [0, 1])
     for (const p of [0, NPIX - 1]) {
       const x2 = Math.log(pixMid[p]);
-      // b0 + b1 x1 + b2 x2 + b3 night + b4 x1 x2 + band2 = 0  →  x1 = -(b0 + b2 x2 + b3 night + band) / (b1 + b4 x2)
-      const bandOff = beta[5 + 1]; // band index 2 → dummy position 5 + (2 - 1)
-      const x1 = -(beta[0] + beta[2] * x2 + beta[3] * night + bandOff) / (beta[1] + beta[4] * x2);
+      // η = 0  →  x1 = -(b0 + b2 x2 + b3 night + band) / (b1 + b4 x2 + b5 night)
+      const bandOff = beta[6 + 1]; // band index 2 (N tropics) → dummy position 6 + (2 - 1)
+      const x1 = -(beta[0] + beta[2] * x2 + beta[3] * night + bandOff) / (beta[1] + beta[4] * x2 + beta[5] * night);
       frp50.push({ night: Boolean(night), pix: PIX_LABELS[p], mw: Math.round(2 ** x1 * 10) / 10 });
     }
 
@@ -176,6 +215,7 @@ export function fitDetection(table: number[], dtHistogram: number[] = []): Detec
     curves,
     frp50,
     overall: Math.round(p0 * 1000) / 1000,
+    ceiling: ceil.map((v, i) => ({ night: i >= NPIX, pix: PIX_LABELS[i % NPIX], value: Math.round(v * 100) / 100 })),
     byBand,
     pseudoR2: Math.round((1 - ll / ll0) * 1000) / 1000,
     dtHistogram,

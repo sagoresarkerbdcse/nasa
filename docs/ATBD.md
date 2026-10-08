@@ -78,7 +78,7 @@ Aqua MODIS and Suomi NPP VIIRS both cross the equator at about 13:30 local time,
 2. **Co-observed.** The object counts as co-observed if Aqua detected fire in the surrounding 3×3 1° cells, in the same day/night pass, within ±25 minutes. That puts the location inside the Aqua swath at that time.
 3. **Detected.** The object counts as detected if an Aqua fire pixel lies within 0.6 × the larger MODIS pixel dimension + 0.5 km. The extra 0.5 km allows for geolocation error and the VIIRS pixel size.
 
-**Model.** A binomial logistic regression is fitted to the matchup table, which is binned by:
+**Model.** A binomial model is fitted to the matchup table, which is binned by:
 * VIIRS fire radiative power (13 log bins),
 * MODIS pixel area at the location (5 bins, from the scan × track size of nearby Aqua pixels),
 * day/night,
@@ -86,7 +86,10 @@ Aqua MODIS and Suomi NPP VIIRS both cross the equator at about 13:30 local time,
 
 The model is:
 
-  logit P = b0 + b1·log2 FRP + b2·ln(pixel area) + b3·night + b4·log2 FRP × ln(pixel area) + band offsets
+  P = ceiling[day/night, pixel class] × sigmoid(η)
+  η = b0 + b1·log2 FRP + b2·ln(pixel area) + b3·night + b4·log2 FRP × ln(pixel area) + b5·night × log2 FRP + band offsets
+
+β is fitted by Fisher scoring. The ceilings are fitted by profile likelihood. They absorb matchup losses that do not depend on fire power: geolocation and timing offsets, and objects counted as co-observed that lay just outside the Aqua swath, which is most common for swath-edge pixels. The sigmoid then describes sensitivity to fire power alone.
 
 **Outputs.** Coefficients with standard errors; observed and fitted curves (`model/modis_detection_probability.csv`); and FRP50, the fire power at which MODIS detects half of the fires VIIRS sees, at nadir and at the swath edge, by day and by night.
 
@@ -94,6 +97,7 @@ The model is:
 
 **Caveats.**
 * The coverage test is a proxy based on detections, not on MODIS geolocation.
+* Above ~200 MW the observed match rate falls slightly. Very large fires span several MODIS pixels, and the 1 km object matching is strict. The monotone model over-predicts there, but those bins are rare.
 * Objects in regions with no Aqua fire at all within about 100 km are not tested.
 * Rare fires that change rapidly within 25 minutes add noise.
 
