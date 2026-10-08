@@ -66,7 +66,7 @@ export function KpiStrip({ analysis: a, meta, harmonized, regionName, onAnomaly 
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-white/[0.07] bg-white/[0.07] sm:grid-cols-3 xl:grid-cols-6" aria-label={`Key statistics for ${regionName}`}>
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-white/[0.07] bg-white/[0.07] sm:grid-cols-3 xl:grid-cols-6" aria-label={`Key statistics for ${regionName}`} data-guide="kpis">
       {tiles.map((tile, i) => {
         const Comp = tile.onClick ? motion.button : motion.div;
         return (

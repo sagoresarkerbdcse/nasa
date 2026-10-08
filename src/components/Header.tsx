@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { BookOpen, Database, FlaskConical, Info, Presentation } from "lucide-react";
+import { BookOpen, Compass, Database, FlaskConical, Info, Presentation } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { GridFile } from "../lib/types";
 
@@ -9,6 +9,8 @@ interface Props {
   onHarmonized: (h: boolean) => void;
   onAbout: () => void;
   onPresent: () => void;
+  onSources: () => void;
+  onGuide: () => void;
 }
 
 /** FireCal mark: an orbit around a burning point (deliberately not an agency insignia). */
@@ -67,7 +69,7 @@ function SatStatus({ name, sensor, since }: { name: string; sensor: string; sinc
   );
 }
 
-export function Header({ meta, harmonized, onHarmonized, onAbout, onPresent }: Props) {
+export function Header({ meta, harmonized, onHarmonized, onAbout, onPresent, onSources, onGuide }: Props) {
   return (
     <header className="relative border-b border-white/[0.07] bg-[#070a0f]/80 backdrop-blur">
       {/* NASA-style tri-band accent */}
@@ -98,12 +100,17 @@ export function Header({ meta, harmonized, onHarmonized, onAbout, onPresent }: P
               <FlaskConical className="h-3.5 w-3.5" /> Sample data
             </button>
           ) : (
-            <span className="hidden items-center gap-1.5 rounded-sm border border-signal/40 bg-nasa-blue/30 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-blue-100 sm:flex">
-              <Database className="h-3.5 w-3.5" /> NASA FIRMS archive
-            </span>
+            <button
+              onClick={onSources}
+              data-guide="sources"
+              className="hidden items-center gap-1.5 rounded-sm border border-signal/40 bg-nasa-blue/30 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-blue-100 transition-colors hover:border-signal hover:bg-nasa-blue/60 sm:flex"
+              title="See where every dataset comes from"
+            >
+              <Database className="h-3.5 w-3.5" /> Data sources
+            </button>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" data-guide="harmonize">
             <span className="eyebrow hidden md:inline">Harmonization</span>
             <div className="relative flex rounded-[4px] border border-white/10 bg-black/40 p-0.5 font-mono text-[10.5px] uppercase tracking-wider" role="radiogroup" aria-label="Harmonization">
               {[
@@ -130,15 +137,20 @@ export function Header({ meta, harmonized, onHarmonized, onAbout, onPresent }: P
             <UtcClock />
           </div>
 
+          <div className="flex items-center gap-2" data-guide="actions">
           <a href="/explain" className="hidden items-center gap-1.5 rounded-[4px] border border-white/10 px-2.5 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-slate-200 transition-colors hover:border-signal/60 md:flex">
             <BookOpen className="h-3.5 w-3.5 text-signal" /> Explain
           </a>
           <button onClick={onPresent} className="flex items-center gap-1.5 rounded-[4px] bg-nasa-red px-2.5 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-white shadow-[0_0_16px_rgba(252,61,33,0.4)] transition-colors hover:bg-[#ff5a3f]">
             <Presentation className="h-3.5 w-3.5" /> Present
           </button>
-          <button onClick={onAbout} className="grid h-8 w-8 place-items-center rounded-[4px] border border-white/10 text-slate-400 transition-colors hover:border-signal/60 hover:text-white" aria-label="About the method">
+          <button onClick={onGuide} className="grid h-8 w-8 place-items-center rounded-[4px] border border-white/10 text-slate-400 transition-colors hover:border-signal/60 hover:text-white" aria-label="Guided tour of the dashboard" title="Guided tour">
+            <Compass className="h-4 w-4" />
+          </button>
+          <button onClick={onAbout} className="grid h-8 w-8 place-items-center rounded-[4px] border border-white/10 text-slate-400 transition-colors hover:border-signal/60 hover:text-white" aria-label="About the method" title="Method">
             <Info className="h-4 w-4" />
           </button>
+          </div>
         </div>
       </div>
     </header>

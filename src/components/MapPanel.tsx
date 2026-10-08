@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { DARK_BASE, FEATURES, GIBS, LABELS } from "../lib/basemaps";
+import { BLACK_MARBLE, FEATURES, GIBS, LABELS, loadAtlas } from "../lib/basemaps";
 import L from "leaflet";
 import { Box, Crosshair, Layers, Pause, Play, Radio, Satellite, SquareDashedMousePointer, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CircleMarker, MapContainer, Marker, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { CircleMarker, GeoJSON, MapContainer, Marker, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { fmt, heat, powScale } from "../lib/color";
 import { cellValues } from "../lib/harmonize";
 import { MONTHS, REGIONS } from "../lib/regions";
@@ -62,14 +62,14 @@ const BASEMAPS: { id: Basemap; label: string }[] = [
   { id: "black", label: "Black Marble" },
   { id: "true", label: "True Color" },
   { id: "blue", label: "Blue Marble" },
-  { id: "dark", label: "Dark" },
+  { id: "dark", label: "Borders" },
 ];
 
 function basemapLayer(b: Basemap, year: number, month: number | null, viirsStart: number) {
   const date = `${year}-${String(month ?? 3).padStart(2, "0")}-15`;
   switch (b) {
     case "black":
-      return { url: `${GIBS}/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`, max: 8, attr: "NASA GIBS · VIIRS Black Marble" };
+      return BLACK_MARBLE;
     case "blue":
       return { url: `${GIBS}/BlueMarble_ShadedRelief_Bathymetry/default//GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg`, max: 8, attr: "NASA GIBS · Blue Marble" };
     case "true": {
@@ -77,7 +77,7 @@ function basemapLayer(b: Basemap, year: number, month: number | null, viirsStart
       return { url: `${GIBS}/${layer}/default/${date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, max: 9, attr: `NASA GIBS · ${year >= viirsStart ? "VIIRS" : "MODIS Terra"} true color ${date}` };
     }
     default:
-      return DARK_BASE;
+      return { url: null, max: 0, attr: "NASA GIBS reference layers" };
   }
 }
 
@@ -120,6 +120,12 @@ export function MapPanel(p: Props) {
   const base = basemapLayer(effectiveBase, year, month, grid.meta.viirsStartYear);
   // One counter set per basemap URL (memoized so re-renders don't reset it).
   const tileHandlers = useMemo(() => tileFallback(() => setGibsDown(true), effectiveBase !== "dark"), [base.url]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Reference layers fail too when GIBS is blocked: draw bundled outlines instead.
+  const featureHandlers = useMemo(() => tileFallback(() => setGibsDown(true), true), []);
+  const [outline, setOutline] = useState<GeoJSON.FeatureCollection | null>(null);
+  useEffect(() => {
+    if (gibsDown) loadAtlas().then(setOutline);
+  }, [gibsDown]);
   const years = grid.meta.lastYear - grid.meta.firstYear + 1;
   const animKey = `${year}-${month ?? 0}-${view}`;
   const { layer } = p;
@@ -151,7 +157,7 @@ export function MapPanel(p: Props) {
   const timeLayer = layer === "activity" || layer === "anomaly";
 
   return (
-    <section className="panel hud flex h-full min-h-[480px] flex-col overflow-hidden" aria-label="Spatial view">
+    <section className="panel hud flex h-full min-h-[480px] flex-col overflow-hidden" aria-label="Spatial view" data-guide="map">
       <header className="panel-head flex items-center gap-3 px-4 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">01</span>
         <h2 className="eyebrow shrink-0 whitespace-nowrap !text-slate-200">Spatial view</h2>
@@ -161,7 +167,7 @@ export function MapPanel(p: Props) {
           <span ref={coordRef} className="tabular-nums">--.---°N --.---°E</span>
         </div>
       </header>
-      <div className="border-b border-white/[0.06] bg-black/20">
+      <div className="border-b border-white/[0.06] bg-black/20" data-guide="layers">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto px-3 py-1.5 scroll-thin" role="tablist" aria-label="Map layer">
           {LAYERS.map((l) => (
             <button
@@ -190,15 +196,17 @@ export function MapPanel(p: Props) {
 
       <div className="relative min-h-0 flex-1">
         <MapContainer center={[23.6, 90.4]} zoom={7} minZoom={5} maxZoom={12} zoomControl={false} className={`absolute inset-0 h-full w-full ${drawing ? "cursor-crosshair" : ""}`} attributionControl>
+          {base.url && <TileLayer key={base.url} url={base.url} maxNativeZoom={base.max} maxZoom={12} eventHandlers={tileHandlers} />}
           <TileLayer
-            key={base.url}
-            url={base.url}
-            maxNativeZoom={base.max}
+            url={FEATURES.url}
+            maxNativeZoom={FEATURES.max}
             maxZoom={12}
-            attribution={`${base.attr} · Fire data: NASA FIRMS`}
-            eventHandlers={tileHandlers}
+            opacity={effectiveBase === "dark" ? 0.7 : 0.45}
+            zIndex={640}
+            attribution={`${base.attr} · Labels: NASA GIBS / © OpenStreetMap · Fire data: NASA FIRMS`}
+            eventHandlers={featureHandlers}
           />
-          <TileLayer url={FEATURES.url} maxNativeZoom={FEATURES.max} maxZoom={12} opacity={0.45} zIndex={640} attribution="Labels: NASA GIBS / © OpenStreetMap" />
+          {gibsDown && outline && <GeoJSON data={outline} interactive={false} style={{ color: "rgba(170,195,235,0.4)", weight: 0.8, fill: false }} />}
           <TileLayer url={LABELS.url} maxNativeZoom={LABELS.max} maxZoom={12} opacity={0.85} zIndex={650} />
           <FitToBBox bbox={bbox} />
           <ZoomControl />
@@ -457,9 +465,9 @@ export function MapPanel(p: Props) {
               Click and drag to define your area of interest
             </motion.div>
           )}
-          {gibsDown && basemap !== "dark" && !p.view3d && (
+          {gibsDown && !p.view3d && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[112px] left-1/2 z-[500] w-max max-w-[90%] -translate-x-1/2 rounded-[3px] border border-amber-300/30 bg-[#070a0f]/90 px-3 py-1.5 font-mono text-[10.5px] text-amber-200">
-              NASA GIBS imagery unreachable. Showing the dark basemap.
+              NASA GIBS imagery unreachable from this network. Showing plain outlines.
             </motion.div>
           )}
           {viirsMissing && (
@@ -475,7 +483,7 @@ export function MapPanel(p: Props) {
         </AnimatePresence>
 
         {/* Time playbar */}
-        <div className={`absolute inset-x-3 bottom-3 z-[500] transition-opacity ${timeLayer ? "" : "pointer-events-none opacity-0"}`} aria-hidden={!timeLayer}>
+        <div className={`absolute inset-x-3 bottom-3 z-[500] transition-opacity ${timeLayer ? "" : "pointer-events-none opacity-0"}`} aria-hidden={!timeLayer} data-guide="timebar">
           <div className="rounded-[4px] border border-white/10 bg-[#070a0f]/90 px-3 py-2.5 backdrop-blur sm:px-4">
             <div className="flex items-center gap-3">
               <button

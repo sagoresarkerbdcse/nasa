@@ -1,11 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { DARK_BASE, LABELS } from "../lib/basemaps";
+import { BLACK_MARBLE, FEATURES, LABELS, loadAtlas } from "../lib/basemaps";
 import L from "leaflet";
 import { Box, Crosshair, Pause, Play, Radio } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GeoJSON, ImageOverlay, MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
-import { feature } from "topojson-client";
-import type { GeometryCollection, Topology } from "topojson-specification";
 import { HOTSPOT_FAMILY, HOTSPOT_META, RISK_CLASSES, divergingColor } from "../lib/analytics";
 import { fmt, heat, powScale } from "../lib/color";
 import { atlasName, cellCenter, grid1Anomaly, grid1Hotspots, grid1Outlook, grid1Values, normName, type Grid1File } from "../lib/global";
@@ -45,13 +43,6 @@ const LAYERS: { id: MapLayer; label: string }[] = [
 // Risk thresholds per 1° cell (~16× the area of a 0.25° cell).
 const RISK_SCALE = 16;
 
-let atlasPromise: Promise<GeoJSON.FeatureCollection> | null = null;
-const loadAtlas = () =>
-  (atlasPromise ??= import("world-atlas/countries-50m.json").then((m) => {
-    const topo = (m.default ?? m) as unknown as Topology<{ countries: GeometryCollection }>;
-    return feature(topo, topo.objects.countries) as unknown as GeoJSON.FeatureCollection;
-  }));
-
 const MERC_MAX = 85;
 const mercY = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (Math.max(-MERC_MAX, Math.min(MERC_MAX, lat)) * Math.PI) / 360));
 
@@ -82,6 +73,13 @@ function paint(cells: Map<number, string>, ids: number[]) {
 export function WorldMapPanel(p: Props) {
   const { g1, layer, year, month } = p;
   const [atlas, setAtlas] = useState<GeoJSON.FeatureCollection | null>(null);
+  // If NASA GIBS is unreachable, make the bundled country outlines carry the geography.
+  const [gibsDown, setGibsDown] = useState(false);
+  const baseHandlers = useMemo<L.LeafletEventHandlerFnMap>(() => {
+    let loads = 0;
+    let errors = 0;
+    return { tileload: () => void loads++, tileerror: () => void (++errors >= 6 && loads === 0 && setGibsDown(true)) };
+  }, []);
   const [hover, setHover] = useState<{ x: number; y: number; html: string } | null>(null);
   const coordRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -145,7 +143,7 @@ export function WorldMapPanel(p: Props) {
   const years = g1.meta.lastYear - g1.meta.firstYear + 1;
 
   return (
-    <section className="panel hud flex h-full min-h-[480px] flex-col overflow-hidden" aria-label="World map">
+    <section className="panel hud flex h-full min-h-[480px] flex-col overflow-hidden" aria-label="World map" data-guide="map">
       <header className="panel-head flex items-center gap-3 px-4 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">01</span>
         <h2 className="eyebrow shrink-0 whitespace-nowrap !text-slate-200">Spatial view</h2>
@@ -155,7 +153,7 @@ export function WorldMapPanel(p: Props) {
           <span ref={coordRef} className="tabular-nums">--.---° --.---°</span>
         </div>
       </header>
-      <div className="border-b border-white/[0.06] bg-black/20">
+      <div className="border-b border-white/[0.06] bg-black/20" data-guide="layers">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto px-3 py-1.5 scroll-thin" role="tablist" aria-label="Map layer">
           {LAYERS.map((l) => (
             <button
@@ -184,16 +182,17 @@ export function WorldMapPanel(p: Props) {
 
       <div className="relative min-h-0 flex-1">
         <MapContainer center={[15, 20]} zoom={2} minZoom={2} maxZoom={9} zoomControl={false} worldCopyJump={false} maxBounds={[[-85, -200], [85, 200]]} className="absolute inset-0 h-full w-full" attributionControl>
-          <TileLayer url={DARK_BASE.url} maxNativeZoom={DARK_BASE.max} attribution={`${DARK_BASE.attr} · Labels: NASA GIBS · Fire data: NASA FIRMS`} />
+          <TileLayer url={BLACK_MARBLE.url} maxNativeZoom={BLACK_MARBLE.max} opacity={0.8} eventHandlers={baseHandlers} attribution={`${BLACK_MARBLE.attr} · Labels: NASA GIBS / © OpenStreetMap · Fire data: NASA FIRMS`} />
+          <TileLayer url={FEATURES.url} maxNativeZoom={FEATURES.max} opacity={0.35} zIndex={640} />
           <ImageOverlay url={url} bounds={[[-MERC_MAX, -180], [MERC_MAX, 180]]} opacity={0.95} className="fc-pixelated" zIndex={300} />
           {atlas && (
             <GeoJSON
-              key={`${selectedAtlas}`}
+              key={`${selectedAtlas}-${gibsDown}`}
               data={atlas}
               style={(f) => {
                 const n = normName(String(f?.properties?.name ?? ""));
                 const sel = n === selectedAtlas;
-                return { color: sel ? "#4d8eff" : "rgba(170,195,235,0.35)", weight: sel ? 2.4 : 0.6, fillColor: "#0b3d91", fillOpacity: sel ? 0.12 : 0 };
+                return { color: sel ? "#4d8eff" : gibsDown ? "rgba(170,195,235,0.35)" : "rgba(170,195,235,0.14)", weight: sel ? 2.4 : 0.5, fillColor: "#0b3d91", fillOpacity: sel ? 0.12 : 0 };
               }}
               onEachFeature={(f, lyr) => {
                 const n = normName(String(f.properties?.name ?? ""));
@@ -234,7 +233,7 @@ export function WorldMapPanel(p: Props) {
           <WorldLegend layer={layer} target={p.outlookTarget} />
         </div>
 
-        <div className="absolute inset-x-3 bottom-3 z-[500]">
+        <div className="absolute inset-x-3 bottom-3 z-[500]" data-guide="timebar">
           <div className="rounded-[4px] border border-white/10 bg-[#070a0f]/90 px-3 py-2.5 backdrop-blur sm:px-4">
             <div className="flex items-center gap-3">
               <button

@@ -5,6 +5,8 @@ import { AnalystPanel, type ExportState, type Health } from "./components/Analys
 import { BootScreen } from "./components/BootScreen";
 import { CalendarPanel } from "./components/CalendarPanel";
 import { ScienceTab } from "./components/ScienceTab";
+import { DataSourcesModal } from "./components/DataSources";
+import { Guide, guideSeen } from "./components/Guide";
 import { ensoRanking, type OniFile } from "./lib/science";
 import { Header } from "./components/Header";
 import { KpiStrip } from "./components/KpiStrip";
@@ -85,7 +87,7 @@ function DashboardApp() {
 
   return (
     <div className="space-bg min-h-full lg:h-full">
-      {grid && <Dashboard grid={grid} points={points} health={health} live={live} global={global} globalStatus={globalStatus} oni={oni} />}
+      {grid && <Dashboard grid={grid} points={points} health={health} live={live} global={global} globalStatus={globalStatus} oni={oni} booted={booted} />}
       <AnimatePresence>{!booted && <BootScreen key="boot" ready={Boolean(grid)} error={error} onDone={done} />}</AnimatePresence>
     </div>
   );
@@ -134,6 +136,7 @@ function Dashboard({
   global,
   globalStatus,
   oni,
+  booted,
 }: {
   grid: GridFile;
   points: PointsFile | null;
@@ -142,6 +145,7 @@ function Dashboard({
   global: GlobalData | null;
   globalStatus: "loading" | "ready" | "missing";
   oni: OniFile | null;
+  booted: boolean;
 }) {
   const init = useRef(readHash()).current;
   const [scopeKind, setScopeKind] = useState<"bd" | "global" | "country">(init.scope);
@@ -164,6 +168,14 @@ function Dashboard({
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [about, setAbout] = useState(false);
   const [presenting, setPresenting] = useState(init.present);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  // First visit: offer the guided tour once the boot sequence has finished.
+  useEffect(() => {
+    if (!booted || init.present || guideSeen()) return;
+    const t = setTimeout(() => setGuideOpen(true), 900);
+    return () => clearTimeout(t);
+  }, [booted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setTab = useCallback((t: InsightTab) => {
     setTabState(t);
@@ -361,7 +373,7 @@ function Dashboard({
 
   return (
     <div className="flex min-h-full flex-col lg:h-full">
-      <Header meta={grid.meta} harmonized={harmonized} onHarmonized={setHarmonized} onAbout={() => setAbout(true)} onPresent={() => setPresenting(true)} />
+      <Header meta={grid.meta} harmonized={harmonized} onHarmonized={setHarmonized} onAbout={() => setAbout(true)} onPresent={() => setPresenting(true)} onSources={() => setSourcesOpen(true)} onGuide={() => setGuideOpen(true)} />
 
       <motion.div {...enter(0)} className="px-3 pt-3 lg:px-4">
         <KpiStrip analysis={analysis} meta={meta} harmonized={harmonized} regionName={regionName} onAnomaly={() => analysis.anomalies[0] && onSelect(analysis.anomalies[0])} />
@@ -502,6 +514,9 @@ function Dashboard({
       <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/[0.06] px-4 py-2 font-mono text-[9.5px] uppercase tracking-wider text-slate-500">
         <span>Data · NASA FIRMS MODIS C6.1 + VIIRS (S-NPP, NOAA-20, NOAA-21)</span>
         <span>Imagery · NASA GIBS</span>
+        <button onClick={() => setSourcesOpen(true)} className="uppercase text-signal hover:underline">
+          All data sources
+        </button>
         <span className="hidden md:inline">Record {grid.meta.firstYear}–{grid.meta.lastYear} + live 7 days</span>
         <a href="/explain" className="text-signal hover:underline">
           Explain it to me →
@@ -511,6 +526,19 @@ function Dashboard({
 
       <AnimatePresence>{about && <AboutModal meta={meta} k={analysis.k} onClose={() => setAbout(false)} />}</AnimatePresence>
       {presenting && <Tour facts={facts} controls={controls} onClose={() => setPresenting(false)} />}
+      <AnimatePresence>
+        {sourcesOpen && (
+          <DataSourcesModal
+            meta={grid.meta}
+            global={global ? { countries: global.summaries.length, firstYear: global.cf.meta.firstYear, lastYear: global.cf.meta.lastYear } : null}
+            live={live ? { generated: live.data.generatedAt, origin: live.origin, count: live.data.detections.length } : null}
+            oniFetched={oni?.fetched ?? null}
+            llm={health?.llm ? (health.model ?? "language model") : null}
+            onClose={() => setSourcesOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+      {guideOpen && !presenting && <Guide onClose={() => setGuideOpen(false)} onPresent={() => setPresenting(true)} />}
     </div>
   );
 }

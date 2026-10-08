@@ -54,7 +54,7 @@ export function CalendarPanel(p: Props) {
   }, [analysis, meta]);
 
   return (
-    <section className="panel flex h-full min-h-0 flex-col" aria-label="Fire calendar">
+    <section className="panel flex h-full min-h-0 flex-col" aria-label="Fire calendar" data-guide="insights">
       <header className="panel-head flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">02</span>
         <div className="mr-auto min-w-0">

@@ -36,7 +36,7 @@ export function ScopeSidebar({ scope, onScope, countries, globalStatus, open, on
 
   if (!open)
     return (
-      <aside className="panel hidden w-11 shrink-0 flex-col items-center gap-3 py-3 lg:flex">
+      <aside className="panel hidden w-11 shrink-0 flex-col items-center gap-3 py-3 lg:flex" data-guide="sidebar">
         <button onClick={onToggle} className="rounded-[3px] p-1.5 text-slate-400 hover:bg-white/5 hover:text-white" aria-label="Open scope sidebar">
           <ChevronsRight className="h-4 w-4" />
         </button>
@@ -51,7 +51,7 @@ export function ScopeSidebar({ scope, onScope, countries, globalStatus, open, on
 
   const active = (s: Scope) => JSON.stringify(s) === JSON.stringify(scope);
   return (
-    <aside className="panel flex max-h-[70vh] w-full shrink-0 flex-col overflow-hidden lg:max-h-none lg:w-[248px]" aria-label="Choose an area">
+    <aside className="panel flex max-h-[70vh] w-full shrink-0 flex-col overflow-hidden lg:max-h-none lg:w-[248px]" aria-label="Choose an area" data-guide="sidebar">
       <header className="panel-head flex items-center gap-2 px-3 py-2.5">
         <span className="font-mono text-[10.5px] text-signal">00</span>
         <h2 className="eyebrow !text-slate-200">Explore</h2>

@@ -93,7 +93,7 @@ export function AnalystPanel(p: Props) {
   const exporting = p.exportState === "drafting" || p.exportState === "rendering";
 
   return (
-    <section className="panel flex h-full min-h-0 flex-col overflow-hidden" aria-label="FireCal Analyst">
+    <section className="panel flex h-full min-h-0 flex-col overflow-hidden" aria-label="FireCal Analyst" data-guide="analyst">
       <header className="panel-head flex items-center gap-3 px-4 py-2">
         <span className="font-mono text-[10.5px] text-signal">03</span>
         <AnalystAvatar active={p.busy} size={30} />

@@ -28,7 +28,7 @@ The browser, the API server and the tests all use the same harmonization engine 
 ## Features
 
 - **Two scales.** The sidebar switches between the **whole world** (236 countries, harmonized per country and on a 1° grid), any **country**, and the **Bangladesh high-detail** record (0.25° map, 0.01° fire-days, preset regions or **draw your own area**).
-- **Interactive maps**: NASA GIBS imagery (Black Marble, Blue Marble, date-matched true color) with a dark fallback, a 3D globe, and layers for activity, anomaly, emerging hot spots, outlook and live fires. A time playbar runs across the full record with a month filter.
+- **Interactive maps, all NASA imagery**: NASA GIBS Black Marble (default on both maps), Blue Marble, date-matched true color, and GIBS place labels and borders. No map key and no commercial tiles. Includes a 3D globe and layers for activity, anomaly, emerging hot spots, outlook and live fires. A time playbar runs across the full record with a month filter.
 - **Insights panel**
   - *Calendar*: years × months heatmap with glowing anomaly cells and hover popovers.
   - *Trends*: naive vs harmonized annual series; season onset, peak and length with trend tests.
@@ -38,6 +38,7 @@ The browser, the API server and the tests all use the same harmonization engine 
   - *Science*: see below.
 - **Before/After harmonization toggle** with an animated counter.
 - **AI analyst** with tools. It runs real statistics (area overview, ranking, period comparison, hot spots, season timing, outlook, live fires, country ranking, fire science) and drives the dashboard itself: it moves the map, switches layers and opens tabs. It is grounded only in computed numbers. Without an API key, a free offline analyst answers instead.
+- **Guided tour** on first visit (reopen with the compass button) and a **Data sources** panel listing every dataset, its provider, resolution, period, where it is used and how to cite it.
 - **Early-warning PDF brief** export, **presentation mode** (guided tour), and shareable URLs (state lives in the URL hash).
 - **Explain page** (`/explain`): narrated, animated stories for ages 3–5, ages 15–20 and seniors, plus "why this data matters", with a quiz.
 
@@ -90,7 +91,7 @@ The merge refuses to write a record with missing years.
 
 ## Interface
 
-NASA-inspired mission-control design: Inter + DM Mono, flat panels with HUD framing, a mission header with live UTC and satellite status, and count-up mission stats. The map has NASA GIBS basemaps (VIIRS Black Marble, Blue Marble, and true-color imagery for the selected date) with automatic fallback to a dark basemap. It also has a satellite swath sweep, fire cells that pop in on every year change, and ember particles. There is a boot sequence, staggered panel entrances, and cascading calendar reveals. Reduced-motion preferences are respected.
+NASA-inspired mission-control design: Inter + DM Mono, flat panels with HUD framing, a mission header with live UTC and satellite status, and count-up mission stats. The map has NASA GIBS basemaps (VIIRS Black Marble, Blue Marble, and true-color imagery for the selected date) with automatic fallback to plain bundled outlines if GIBS can't be reached. It also has a satellite swath sweep, fire cells that pop in on every year change, and ember particles. There is a boot sequence, staggered panel entrances, and cascading calendar reveals. Reduced-motion preferences are respected.
 
 ## Project layout
 
