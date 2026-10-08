@@ -61,6 +61,7 @@ function Legend({ items }: { items: { label: string; color: string; dashed?: boo
   );
 }
 
+const pv = (p: number) => (p < 0.001 ? "< 0.001" : `= ${p}`);
 const P = ({ children }: { children: React.ReactNode }) => <p className="mt-3 text-[12.5px] leading-relaxed text-slate-400">{children}</p>;
 
 export default function LabPage() {
@@ -354,12 +355,12 @@ export default function LabPage() {
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
               {drift.passes.map((ps) => (
-                <Tile key={ps.sat + ps.pass} label={`${ps.sat === "terra" ? "Terra" : "Aqua"} ${ps.pass}`} value={`${ps.slope > 0 ? "+" : ""}${Math.round(ps.slope * 1000) / 10}%/h`} sub={`detections vs VIIRS per hour of drift · p=${ps.p}`} />
+                <Tile key={ps.sat + ps.pass} label={`${ps.sat === "terra" ? "Terra" : "Aqua"} ${ps.pass}`} value={`${ps.slope > 0 ? "+" : ""}${Math.round(ps.slope * 1000) / 10}%/h`} sub={`change in detections vs VIIRS per hour later overpass · p ${pv(ps.p)}`} />
               ))}
             </div>
             <P>
               Overpass times come from the detections themselves (local solar time, |lat| ≤ 40°). Comparing each MODIS pass with VIIRS (whose orbit is maintained) shows how the share of fires MODIS catches changes as its overpass slides along the daily fire cycle. A MODIS-only
-              world trend reads {drift.modisTrend.raw}%/decade (p={drift.modisTrend.rawP}); removing the drift effect gives {drift.modisTrend.corrected}%/decade (p={drift.modisTrend.correctedP}). FireCal uses VIIRS from 2012 and trains the transfer on {h?.trainYears[0]}–
+              world trend reads {drift.modisTrend.raw}%/decade (p {pv(drift.modisTrend.rawP)}); removing the drift effect gives {drift.modisTrend.corrected}%/decade (p {pv(drift.modisTrend.correctedP)}). FireCal uses VIIRS from 2012 and trains the transfer on {h?.trainYears[0]}–
               {h?.trainYears.at(-1)}, so its record is not affected.
             </P>
           </Card>
