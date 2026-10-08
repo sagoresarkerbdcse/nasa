@@ -155,7 +155,46 @@ Treat these values as conservative, internally consistent estimates for comparin
 | `stac/`, `catalog.json` | STAC 1.0 catalog |
 | `datapackage.json` | Frictionless Data package |
 
-## 9. Limitations
+## 9. Key results (release 1.0, record 2003–2024)
+
+**Harmonization accuracy.** Blind test, country-month median absolute error:
+
+| Train → test | One global ratio | One ratio per country | v2 | v2 90% coverage (monthly / annual) |
+|---|---|---|---|---|
+| 2017–21 → 2013–16 | 36.6% | 22.0% | **12.3%** | 91% / 91% |
+| 2013–17 → 2018–21 | 39.2% | 24.0% | **12.8%** | 87% / 89% |
+| 2013–21 → 2022–24 | 39.4% | 24.5% | **14.4%** | 85% / 84% |
+
+The annual median error with v2 is 5.4–6.4%.
+
+**MODIS detection (55.9 million co-observed VIIRS fire objects, 2012–2024).**
+* MODIS detects about 30% of them.
+* FRP50 by day: 11.7 MW at nadir and 89 MW at the swath edge. By night: 8.0 MW and 31 MW. MODIS is more sensitive at night, against the cooler background.
+* Matchup ceilings are 0.86–0.98, except 0.62 for daytime swath-edge pixels.
+
+**Orbit drift (overpass local solar time vs 2013–2017).**
+
+| Satellite | Shift by 2024 | Detection ratio vs VIIRS |
+|---|---|---|
+| Terra day | 44 min earlier | −22% |
+| Terra night | 44 min earlier, toward evening fires | +44% |
+| Aqua day | 37 min later, toward the afternoon peak | +16% |
+| Aqua night | 36 min later | — |
+| VIIRS S-NPP | stable within ±3 min | — |
+
+* The drift alone raises MODIS fire-days by about **12% in 2024** (3.4% in 2023).
+* A MODIS-only world trend reads −9.1%/decade; without the drift effect it is −10.2%/decade.
+
+**Sensor outages detected.**
+* VIIRS: 2012-01 (data start, 35%), 2012-03 (81%), 2022-07 (83%), 2022-08 (69%), 2024-07 (56%).
+* MODIS: 2022-04.
+
+**Emissions (world, conservative).**
+* Active-fire CO₂ is about 3.4–3.9 Pg per year in 2003–2007 and 2.9–3.3 Pg per year in 2013–2024. Dry matter is 1.7–2.4 Pg per year.
+* That is roughly 40–50% of burned-area inventories such as GFED. This is expected for an FRP method without cloud or small-fire correction.
+* The decline matches the known decrease in global burned area.
+
+## 10. Limitations
 
 * Fire-days measure **active-fire occurrence**, not burned area or fire size.
 * Country attribution follows the FIRMS country files.
@@ -164,7 +203,7 @@ Treat these values as conservative, internally consistent estimates for comparin
 * The transfer assumes that the relation between MODIS and VIIRS fire-days in a unit and season was the same in 2003–2011 as in 2013–2021. Strong land-use change (for example, the end of large-scale peat burning) can violate this. Check the interval width and the validation.
 * NOAA-20 and NOAA-21 VIIRS are not mixed into the reference, to keep one consistent sensor.
 
-## 10. References
+## 11. References
 
 * Andreae, M. O. (2019). Emission of trace gases and aerosols from biomass burning: an updated assessment. *Atmospheric Chemistry and Physics*, 19, 8523–8546.
 * Giglio, L., Schroeder, W., Justice, C. O. (2016). The collection 6 MODIS active fire detection algorithm and fire products. *Remote Sensing of Environment*, 178, 31–41.

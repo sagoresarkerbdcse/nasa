@@ -37,6 +37,11 @@ Scores come from a **blind test**. The transfer is trained on some overlap years
 
 The v2 90% intervals contain about 85–91% of held-out values.
 
+What the real record shows (2003–2024):
+- **Orbit drift.** By 2024, Terra's daytime overpass is 44 minutes earlier and Aqua's 37 minutes later. That alone inflates MODIS fire counts by about 12%.
+- **Outages.** VIIRS outages were found and corrected: July–August 2022 and July 2024.
+- **Detection.** MODIS detects about 30% of the 55.9 million fires VIIRS saw in the same overpass. It needs about 12 MW of fire power at nadir by day, but about 89 MW at the swath edge.
+
 The **Harmonization Lab** (`/lab`) shows the evidence:
 - the blind-test table and each country's seasonal transfer,
 - **MODIS detection probability** from same-overpass VIIRS/Aqua matchups: the fire power at which MODIS sees half of the fires, at nadir and at the swath edge,
