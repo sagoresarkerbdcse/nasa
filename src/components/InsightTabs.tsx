@@ -47,7 +47,8 @@ function Shift({ days, p, unit = "days/yr", invert = false }: { days: number; p:
 // ---------------------------------------------------------------------------
 export function TrendsTab({ analysis, meta, harmonized }: { analysis: AoiAnalysis; meta: GridFile["meta"]; harmonized: boolean }) {
   const s = useMemo(() => seasonTiming(analysis), [analysis]);
-  const annual = analysis.annual.map((a) => ({ year: a.year, harmonized: Math.round(a.harmonized), naive: a.naive }));
+  const annual = analysis.annual.map((a) => ({ year: a.year, harmonized: Math.round(a.harmonized), naive: a.naive, band: a.lo !== undefined && a.hi !== undefined ? ([Math.round(a.lo), Math.round(a.hi)] as [number, number]) : undefined }));
+  const hm = analysis.harmonization;
   const season = s.years.map((y) => ({ year: y.year, range: [Math.round(y.onset), Math.round(y.end)] as [number, number], peak: Math.round(y.peak), onset: Math.round(y.onset) }));
   const t = analysis.trend;
   return (
@@ -74,6 +75,11 @@ export function TrendsTab({ analysis, meta, harmonized }: { analysis: AoiAnalysi
           <span className={`flex items-center gap-1.5 ${!harmonized ? "text-slate-200" : "text-slate-500"}`}>
             <span className="h-0.5 w-3 border-t-2 border-dashed border-signal" /> Naive raw counts
           </span>
+          {hm && (
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="h-2 w-3 rounded-[1px] bg-white/25" /> 90% interval (MODIS years)
+            </span>
+          )}
         </figcaption>
         <div className="h-[170px]">
           <ResponsiveContainer>
@@ -87,14 +93,28 @@ export function TrendsTab({ analysis, meta, harmonized }: { analysis: AoiAnalysi
               <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="year" tick={axis} tickLine={false} axisLine={false} interval={3} />
               <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={(v) => fmt(v)} />
-              <Tooltip {...tooltipStyle} />
+              <Tooltip
+                {...tooltipStyle}
+                formatter={(v: unknown, name?: unknown) => (Array.isArray(v) ? [`${fmt(v[0])} – ${fmt(v[1])}`, "90% interval"] : [fmt(Number(v)), String(name)])}
+              />
               <ReferenceLine x={meta.viirsStartYear} stroke="#4d8eff" strokeDasharray="3 3" label={{ value: "VIIRS", fill: "#4d8eff", fontSize: 9, position: "insideTopLeft" }} />
+              <Area animationDuration={500} type="monotone" dataKey="band" name="90% interval" stroke="none" fill="rgba(255,255,255,0.16)" isAnimationActive={false} />
               <Area animationDuration={500} type="monotone" dataKey="harmonized" name="Harmonized" stroke="#ff7a1a" strokeWidth={2} fill="url(#trFill)" />
               <Line animationDuration={500} type="monotone" dataKey="naive" name="Naive raw" stroke="#4d8eff" strokeDasharray="5 4" strokeWidth={harmonized ? 1.2 : 2} dot={false} strokeOpacity={harmonized ? 0.6 : 1} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       </figure>
+
+      {hm && (
+        <p className="text-[11px] leading-snug text-slate-400">
+          Harmonization v2 for this area: VIIRS ≈ k × MODIS + small-fire floor, k {Math.min(...hm.k).toFixed(2)}–{Math.max(...hm.k).toFixed(2)} across the year (trained on {hm.trainYears[0]}–{hm.trainYears[1]}). Blind tests on held-out years: see the{" "}
+          <a href="/lab" className="text-signal hover:underline">
+            Harmonization Lab
+          </a>
+          .
+        </p>
+      )}
 
       {s.years.length > 0 && (
         <figure>

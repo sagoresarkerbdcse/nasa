@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this dataset or software, please cite it as below, and acknowledge NASA FIRMS as the source of the underlying active-fire detections."
+title: "FireCal Harmonized Active Fire Record (MODIS→VIIRS)"
+type: dataset
+version: "1.0.0"
+date-released: "2026-10-08"
+license: CC-BY-4.0
+repository-code: "https://github.com/sagoresarkerbdcse/nasa"
+# TODO before the first release: list every team member (and ORCID iDs if you have them), e.g.
+#   - family-names: "Sarker"
+#     given-names: "..."
+#     orcid: "https://orcid.org/0000-0000-0000-0000"
+authors:
+  - name: "FireCal AI team (NASA Space Apps Challenge 2026)"
+keywords:
+  - active fire
+  - MODIS
+  - VIIRS
+  - NASA FIRMS
+  - harmonization
+  - climate data record
+  - fire radiative power
+  - biomass burning emissions
+abstract: >-
+  Monthly active-fire activity in VIIRS-equivalent fire-days for every country and every 1° cell,
+  built from NASA FIRMS MODIS Collection 6.1 and VIIRS S-NPP 375 m archives. MODIS-only years are
+  harmonized to VIIRS units with a season-stratified, hierarchically shrunk transfer and a small-fire
+  floor, validated blind on held-out overlap years, with 90% intervals. Includes fire radiative energy
+  and CO2/CO/PM2.5 emission estimates, a MODIS detection-probability model from same-overpass
+  matchups, and a Terra/Aqua orbit-drift analysis.
+references:
+  - type: data
+    title: "NASA Fire Information for Resource Management System (FIRMS)"
+    authors:
+      - name: "NASA Earth Science Data and Information System (ESDIS)"
+    url: "https://www.earthdata.nasa.gov/data/tools/firms"

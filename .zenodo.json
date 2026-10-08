@@ -1,0 +1,13 @@
+{
+  "title": "FireCal Harmonized Active Fire Record (MODIS→VIIRS), 2003–present",
+  "upload_type": "dataset",
+  "description": "<p>Monthly active-fire activity in VIIRS-equivalent fire-days for every country and every 1° cell, built from NASA FIRMS MODIS Collection 6.1 and VIIRS S-NPP 375 m archives.</p><p>MODIS-only years (2003–2011) are harmonized to VIIRS units with a season-stratified, hierarchically shrunk transfer with a small-fire floor, validated blind on held-out overlap years, with 90% intervals. The package also contains fire radiative energy and CO₂/CO/PM2.5 emission estimates, a MODIS detection-probability model from same-overpass VIIRS/Aqua matchups, and a Terra/Aqua orbit-drift analysis.</p><p>Formats: CF-1.8 NetCDF, Cloud-Optimized GeoTIFF, CSV, STAC 1.0, Frictionless datapackage. Methods: ATBD.md.</p><p>Independent project for the NASA Space Apps Challenge 2026; not affiliated with or endorsed by NASA. Underlying detections: NASA FIRMS (ESDIS).</p>",
+  "creators": [{ "name": "FireCal AI team (NASA Space Apps Challenge 2026)" }],
+  "license": "cc-by-4.0",
+  "access_right": "open",
+  "keywords": ["active fire", "MODIS", "VIIRS", "NASA FIRMS", "harmonization", "climate data record", "fire radiative power", "biomass burning emissions", "orbit drift"],
+  "related_identifiers": [
+    { "identifier": "https://www.earthdata.nasa.gov/data/tools/firms", "relation": "isDerivedFrom", "resource_type": "dataset" },
+    { "identifier": "https://github.com/sagoresarkerbdcse/nasa", "relation": "isSupplementTo", "resource_type": "software" }
+  ]
+}

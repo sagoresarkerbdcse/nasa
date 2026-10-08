@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Atom, CalendarDays, Flame, LineChart as LineIcon, Radio, Telescope, Zap } from "lucide-react";
+import { Atom, CalendarDays, Download, Flame, LineChart as LineIcon, Radio, Telescope, Zap } from "lucide-react";
+import { analysisCsv, downloadText } from "../lib/download";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { OutlookMonth } from "../lib/analytics";
 import { fmt, heat, powScale } from "../lib/color";
@@ -63,6 +64,14 @@ export function CalendarPanel(p: Props) {
             {regionName} · {harmonized ? "harmonized fire-days, VIIRS-equivalent" : `raw detections: MODIS until ${meta.viirsStartYear - 1}, then VIIRS`}
           </p>
         </div>
+        <button
+          onClick={() => downloadText(`firecal_${regionName.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}_monthly.csv`, analysisCsv(analysis, regionName))}
+          className="order-last grid h-7 w-7 place-items-center rounded-[4px] border border-white/10 text-slate-400 transition-colors hover:border-signal/60 hover:text-white sm:order-none"
+          title="Download this area's monthly record (CSV, with 90% intervals)"
+          aria-label="Download CSV"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
         <div className="flex max-w-full overflow-x-auto rounded-[4px] border border-white/10 bg-black/30 p-0.5 font-mono text-[10px] uppercase tracking-wider scroll-thin" role="tablist">
           {TABS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`relative flex shrink-0 items-center gap-1.5 rounded-[3px] px-2 py-1 ${tab === id ? "text-white" : "text-slate-400 hover:text-slate-200"}`}>

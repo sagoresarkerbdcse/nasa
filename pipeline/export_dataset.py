@@ -210,6 +210,11 @@ def main():
         p = os.path.join(ROOT, src)
         if os.path.exists(p):
             text = open(p).read().replace("{{VERSION}}", VERSION).replace("{{YEARS}}", f"{y0}–{y1}").replace("{{DATE}}", NOW[:10])
+            if dst == "CITATION.cff":
+                import re
+
+                text = re.sub(r'^version: ".*"$', f'version: "{VERSION}"', text, flags=re.M)
+                text = re.sub(r'^date-released: ".*"$', f'date-released: "{NOW[:10]}"', text, flags=re.M)
             open(os.path.join(OUT, dst), "w").write(text)
     open(os.path.join(OUT, "LICENSE.txt"), "w").write(
         "Creative Commons Attribution 4.0 International (CC BY 4.0)\nhttps://creativecommons.org/licenses/by/4.0/\n\n"

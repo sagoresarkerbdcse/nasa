@@ -22,9 +22,16 @@ import type { BBox, GridFile, InsightTab, LiveFile, MapLayer, MonthStat, PointsF
 import { useAnalyst } from "./lib/useAnalyst";
 
 const ExplainPage = lazy(() => import("./explain/ExplainPage"));
+const LabPage = lazy(() => import("./lab/LabPage"));
 
 export function App() {
   const isExplain = typeof window !== "undefined" && /^\/explain\/?$/.test(window.location.pathname);
+  if (typeof window !== "undefined" && /^\/lab\/?$/.test(window.location.pathname))
+    return (
+      <Suspense fallback={<div className="grid h-full place-items-center text-sm text-slate-400">Loading the lab…</div>}>
+        <LabPage />
+      </Suspense>
+    );
   if (isExplain)
     return (
       <Suspense fallback={<div className="grid h-full place-items-center text-sm text-slate-400">Loading stories…</div>}>
