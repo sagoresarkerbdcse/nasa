@@ -19,6 +19,7 @@
  * 10 years (z-score + % change). Trend uses Mann-Kendall + Sen's slope on
  * annual totals.
  */
+import { DEFAULT_TRAIN_YEARS, fitUnit, predict, predictAnnual, type Series, type UnitModel } from "./harmonize2";
 import { RECORD_WIDTH, type AoiAnalysis, type BBox, type GridFile, type MonthStat, type SensorView, type TrendResult } from "./types";
 
 export interface Acc {
@@ -84,15 +85,35 @@ function calibrate(grid: { meta: SeriesMeta }, acc: Acc[]): { k: number; fd: num
   return { k: m > 0 ? v / m : 1, fd: m };
 }
 
-const domainKCache = new WeakMap<GridFile, number>();
-export function domainK(grid: GridFile): number {
-  let k = domainKCache.get(grid);
-  if (k === undefined) {
-    k = calibrate(grid, aggregate(grid, null)).k;
-    domainKCache.set(grid, k);
-  }
-  return k;
+/** Overlap years used to train the harmonization (complete years only). */
+export function trainYearsFor(meta: SeriesMeta): number[] {
+  const complete = (y: number) => y >= meta.viirsStartYear && (y < meta.lastYear || meta.lastMonth === 12);
+  const ys = DEFAULT_TRAIN_YEARS.filter((y) => y >= meta.firstYear && y <= meta.lastYear && complete(y));
+  if (ys.length >= 3) return ys;
+  const all: number[] = [];
+  for (let y = meta.viirsStartYear; y <= meta.lastYear; y++) if (complete(y)) all.push(y);
+  return all;
 }
+
+export const seriesOf = (acc: Acc[]): Series => ({ M: acc.map((a) => a.modisFD), V: acc.map((a) => a.viirsFD) });
+
+/** Root of a hierarchy (whole study domain, or the world): fitted to itself. */
+export function rootModel(acc: Acc[], meta: SeriesMeta): UnitModel {
+  const c = calibrate({ meta }, acc);
+  return fitUnit(seriesOf(acc), { firstYear: meta.firstYear, trainYears: trainYearsFor(meta), n0: 0 }, { kAnnual: c.k, sigma: 0.35 });
+}
+
+const domainCache = new WeakMap<GridFile, UnitModel>();
+export function domainModel(grid: GridFile): UnitModel {
+  let m = domainCache.get(grid);
+  if (!m) {
+    m = rootModel(aggregate(grid, null), grid.meta);
+    domainCache.set(grid, m);
+  }
+  return m;
+}
+/** Annual MODIS→VIIRS ratio of the whole study domain (map cells). */
+export const domainK = (grid: GridFile) => domainModel(grid).kAnnual;
 
 function isMissing(grid: { meta: SeriesMeta }, year: number, month: number) {
   return year === grid.meta.lastYear && month > grid.meta.lastMonth;
@@ -100,7 +121,7 @@ function isMissing(grid: { meta: SeriesMeta }, year: number, month: number) {
 
 export function analyzeAoi(grid: GridFile, bbox: BBox): AoiAnalysis {
   const cells = cellsInBBox(grid, bbox);
-  return analyzeSeries(aggregate(grid, cells), grid.meta, { bbox, cellCount: cells.size, fallbackK: () => domainK(grid) });
+  return analyzeSeries(aggregate(grid, cells), grid.meta, { bbox, cellCount: cells.size, parent: () => domainModel(grid) });
 }
 
 /**
@@ -108,28 +129,31 @@ export function analyzeAoi(grid: GridFile, bbox: BBox): AoiAnalysis {
  * record, a country, or the world): harmonization, anomalies, climatology,
  * peak months and trend.
  */
-export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; cellCount: number; fallbackK: () => number }): AoiAnalysis {
+export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; cellCount: number; parent: () => UnitModel }): AoiAnalysis {
   const grid = { meta };
   const bbox = opts.bbox;
   const { firstYear, lastYear, viirsStartYear } = meta;
 
-  // Small areas have too few overlap fire-days for a stable ratio: fall back to the wider factor.
-  const local = calibrate(grid, acc);
-  const useLocal = local.fd >= 40;
-  const k = useLocal ? local.k : opts.fallbackK();
+  // Harmonization v2 (see harmonize2.ts): season-stratified ratio + small-fire floor,
+  // shrunk toward the parent (study domain / world) where this area has little overlap evidence.
+  const trainYears = trainYearsFor(meta);
+  const model = fitUnit(seriesOf(acc), { firstYear, trainYears }, opts.parent());
+  const k = model.kAnnual;
+  const useLocal = model.n >= 40;
 
   const months: MonthStat[] = [];
   for (let y = firstYear; y <= lastYear; y++) {
     for (let mo = 1; mo <= 12; mo++) {
       const a = acc[monthIndex(grid, y, mo)];
       const viirsEra = y >= viirsStartYear;
-      const harmonized = viirsEra ? a.viirsFD : a.modisFD * k;
+      const pred = viirsEra ? null : predict(model, a.modisFD, mo - 1);
+      const harmonized = pred ? pred.v : a.viirsFD;
       const naive = viirsEra ? a.viirsRaw : a.modisRaw;
       const raw = a.modisRaw + a.viirsRaw;
       const highFrac = raw > 0 ? (a.modisHigh + a.viirsHigh) / raw : 0;
       let agreement = 0.6; // single-sensor era: no cross-check available
       if (viirsEra && (a.modisFD > 0 || a.viirsFD > 0)) {
-        agreement = 1 - Math.min(1, Math.abs(Math.log((a.viirsFD + 1) / (a.modisFD * k + 1))) / Math.log(4));
+        agreement = 1 - Math.min(1, Math.abs(Math.log((a.viirsFD + 1) / (a.modisFD * model.k[mo - 1] + model.floor[mo - 1] + 1))) / Math.log(4));
       }
       const sample = Math.min(1, Math.log10(1 + harmonized) / 2);
       const hci = raw > 0 ? Math.round(100 * (0.4 * highFrac + 0.35 * agreement + 0.25 * sample)) : 0;
@@ -142,6 +166,7 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
         viirsFD: a.viirsFD,
         naive,
         harmonized: round1(harmonized),
+        ...(pred ? { lo: round1(pred.lo), hi: round1(pred.hi) } : {}),
         hci,
         ratio: a.modisRaw > 0 && viirsEra ? round2(a.viirsRaw / a.modisRaw) : null,
         baseline: null,
@@ -184,6 +209,7 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
     annual.push({
       year: y,
       harmonized: round1(sum(ym.map((m) => m.harmonized))),
+      ...(y < viirsStartYear ? annualInterval(model, ym) : {}),
       naive: sum(ym.map((m) => m.naive)),
       modisRaw: sum(ym.map((m) => m.modisRaw)),
       viirsRaw: sum(ym.map((m) => m.viirsRaw)),
@@ -213,6 +239,7 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
     k: round2(k),
     kSource: useLocal ? "aoi" : "domain",
     overlapYears: [viirsStartYear, lastYear],
+    harmonization: { method: "v2", k: model.k, floor: model.floor, kLo: model.kLo, kHi: model.kHi, sigma: model.sigma, trainYears: [trainYears[0], trainYears[trainYears.length - 1]], evidence: model.n },
     months,
     annual,
     climatology,
@@ -226,6 +253,11 @@ export function analyzeSeries(acc: Acc[], meta: SeriesMeta, opts: { bbox: BBox; 
       viirsRaw: sum(annual.map((a) => a.viirsRaw)),
     },
   };
+}
+
+function annualInterval(model: UnitModel, ym: MonthStat[]) {
+  const p = predictAnnual(model, Array.from({ length: 12 }, (_, m) => ym[m]?.modisFD ?? 0));
+  return { lo: round1(p.lo), hi: round1(p.hi) };
 }
 
 /** Per-cell intensity for the map, for one year (and optionally one month). */

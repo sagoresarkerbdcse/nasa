@@ -8,7 +8,8 @@
  * engine as the high-resolution Bangladesh record.
  */
 import { ehsa, summarizeHotspots, type CellHotspot } from "./analytics";
-import { analyzeSeries, emptyAcc, mannKendall, type Acc, type SeriesMeta } from "./harmonize";
+import { analyzeSeries, emptyAcc, mannKendall, rootModel, type Acc, type SeriesMeta } from "./harmonize";
+import type { UnitModel } from "./harmonize2";
 import type { AoiAnalysis, BBox, GridFile, TrendResult } from "./types";
 
 export const NF = 10;
@@ -60,6 +61,17 @@ export function toAcc(data: number[]): Acc[] {
   return out;
 }
 
+const worldCache = new WeakMap<CountriesFile, UnitModel>();
+/** Root of the country hierarchy: the world's own v2 model. */
+export function worldModel(cf: CountriesFile): UnitModel {
+  let m = worldCache.get(cf);
+  if (!m) {
+    m = rootModel(toAcc(cf.world), seriesMeta(cf));
+    worldCache.set(cf, m);
+  }
+  return m;
+}
+
 const analysisCache = new Map<string, AoiAnalysis>();
 /** Full harmonized analysis for a country (or the world when name is null). */
 export function analyzeCountry(cf: CountriesFile, name: string | null): AoiAnalysis {
@@ -68,7 +80,7 @@ export function analyzeCountry(cf: CountriesFile, name: string | null): AoiAnaly
   if (hit) return hit;
   const c = name ? cf.countries.find((x) => x.name === name) : null;
   const data = c ? c.data : cf.world;
-  const a = analyzeSeries(toAcc(data), seriesMeta(cf), { bbox: c?.bbox ?? WORLD_BBOX, cellCount: 0, fallbackK: () => cf.meta.kWorld });
+  const a = analyzeSeries(toAcc(data), seriesMeta(cf), { bbox: c?.bbox ?? WORLD_BBOX, cellCount: 0, parent: () => worldModel(cf) });
   analysisCache.set(key, a);
   return a;
 }

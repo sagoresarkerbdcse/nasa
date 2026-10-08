@@ -70,6 +70,9 @@ export interface MonthStat {
   naive: number;
   /** Harmonized fire-days in VIIRS-equivalent units. */
   harmonized: number;
+  /** 90% interval of the harmonized value (MODIS-only months; observed VIIRS months have none). */
+  lo?: number;
+  hi?: number;
   /** Harmonized Confidence Index, 0-100. */
   hci: number;
   /** VIIRS raw / MODIS raw detection ratio (null when MODIS saw nothing). */
@@ -101,7 +104,9 @@ export interface AoiAnalysis {
   kSource: "aoi" | "domain";
   overlapYears: [number, number];
   months: MonthStat[]; // chronological, every month in the record
-  annual: { year: number; harmonized: number; naive: number; modisRaw: number; viirsRaw: number }[];
+  annual: { year: number; harmonized: number; lo?: number; hi?: number; naive: number; modisRaw: number; viirsRaw: number }[];
+  /** Harmonization v2 model fitted for this area (see src/lib/harmonize2.ts). */
+  harmonization?: { method: "v2"; k: number[]; floor: number[]; kLo: number[]; kHi: number[]; sigma: number; trainYears: [number, number]; evidence: number };
   climatology: { month: number; mean: number; share: number }[];
   peakMonths: number[];
   trend: TrendResult;

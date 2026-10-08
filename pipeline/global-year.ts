@@ -17,6 +17,7 @@ import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { FRP_EDGES, LAT_BANDS, PIX_EDGES, idx as matchIdx } from "../src/lib/detection";
 
 export const FIELDS = ["modisRaw", "viirsRaw", "modisFD", "viirsFD", "modisHigh", "viirsHigh", "modisFRP", "viirsFRP", "modisNight", "viirsNight"] as const;
 export const NF = FIELDS.length;
@@ -34,15 +35,12 @@ export const NS = SAT_FIELDS.length;
  * pixel dimension + 0.5 km for geolocation and the VIIRS pixel).
  */
 export const MATCH_MIN = 25;
-export const LAT_BANDS = [-23.5, 0, 23.5, 50]; // → 5 bands: S extratropics, S tropics, N tropics, N temperate, boreal
-export const FRP_EDGES = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]; // MW → 13 bins
-export const PIX_EDGES = [1.5, 2.5, 4, 7]; // MODIS pixel area km² (1 at nadir, ~10 at swath edge) → 5 bins
 export const binOf = (v: number, edges: number[]) => {
   let i = 0;
   while (i < edges.length && v >= edges[i]) i++;
   return i;
 };
-export const matchIndex = (band: number, night: number, frpBin: number, pixBin: number) => ((band * 2 + night) * (FRP_EDGES.length + 1) + frpBin) * (PIX_EDGES.length + 1) + pixBin;
+export const matchIndex = matchIdx;
 export const MATCH_CELLS = (LAT_BANDS.length + 1) * 2 * (FRP_EDGES.length + 1) * (PIX_EDGES.length + 1);
 
 export interface YearOutput {

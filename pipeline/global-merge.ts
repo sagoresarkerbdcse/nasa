@@ -8,6 +8,8 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { YearOutput } from "./global-year";
+import { buildEmissions, buildHarmonization, harmonizeCells } from "./harmonization-build";
+import { writeDatasetTables } from "./dataset-tables";
 
 const NF = 10;
 const dir = process.argv[2] ?? "global-out";
@@ -59,33 +61,18 @@ for (let i = 0; i < world.length; i += NF) {
 }
 const kWorld = m ? v / m : 1;
 
-// --- 1° grid ---------------------------------------------------------------
+// --- 1° grid: v2 harmonization per cell (parents: 10° blocks → world) ----------
 const cellIds = new Set<number>();
 for (const y of years) Object.keys(y.cells).forEach((c) => cellIds.add(Number(c)));
 const ids = [...cellIds].sort((a, b) => a - b);
-const yearly: number[] = []; // ids.length × nY harmonized fire-days
-const clim: number[] = []; // ids.length × 12 mean harmonized fire-days, last 10 years
-const recentYears = years.slice(-10);
-const byYear = new Map(years.map((y) => [y.year, y]));
-for (const id of ids) {
-  // Always one value per calendar year in the range so the client can index by year.
-  for (let yr = firstYear; yr <= lastYear; yr++) {
-    const arr = byYear.get(yr)?.cells[id];
-    let tot = 0;
-    if (arr) for (let mo = 0; mo < 12; mo++) tot += yr >= 2012 ? arr[mo * 2 + 1] : arr[mo * 2] * kWorld;
-    yearly.push(Math.round(tot));
-  }
-  for (let mo = 0; mo < 12; mo++) {
-    let s = 0;
-    for (const y of recentYears) {
-      const arr = y.cells[id];
-      if (arr) s += y.year >= 2012 ? arr[mo * 2 + 1] : arr[mo * 2] * kWorld;
-    }
-    clim.push(Math.round((s / recentYears.length) * 10) / 10);
-  }
-}
+const harmonization = buildHarmonization(years, countries, world, firstYear, lastYear);
+const t0 = Date.now();
+const cellsV2 = harmonizeCells(years, ids, firstYear, lastYear, harmonization.world);
+console.log(`cell models: ${ids.length} in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+const { yearly, clim } = cellsV2;
+const emissions = buildEmissions(years, countries.map((c) => c.name), firstYear, lastYear);
 
-const outDir = "public/data/global";
+const outDir = process.env.GLOBAL_OUT ?? "public/data/global";
 mkdirSync(outDir, { recursive: true });
 const meta = {
   source: "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375 m standard archive, all-countries yearly files",
@@ -107,5 +94,9 @@ writeFileSync(
     years: years.map((y) => ({ year: y.year, sat: y.sat ?? null, lst: y.lst ?? null, match: y.match ?? null, matchCountry: y.matchCountry ?? null, matchDt: y.matchDt ?? null })),
   }),
 );
-writeFileSync(join(outDir, "grid1.json"), JSON.stringify({ meta: { firstYear, lastYear, cellSize: 1, kWorld: meta.kWorld }, ids, yearly, clim }));
+writeFileSync(join(outDir, "grid1.json"), JSON.stringify({ meta: { firstYear, lastYear, cellSize: 1, kWorld: meta.kWorld, method: "v2" }, ids, yearly, clim }));
+writeFileSync(join(outDir, "harmonization.json"), JSON.stringify(harmonization));
+if (emissions) writeFileSync(join(outDir, "emissions.json"), JSON.stringify(emissions));
+// Open-dataset tables (not committed; the workflow packages them).
+writeDatasetTables(process.env.DATASET_DIR ?? "dataset-build", { firstYear, lastYear, countries, world, ids, cellsV2, harmonization, emissions });
 console.log(`countries.json: ${countries.length} countries; grid1.json: ${ids.length} cells; k(world) = ${meta.kWorld}`);
