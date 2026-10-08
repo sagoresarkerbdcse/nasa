@@ -7,6 +7,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { HOTSPOT_META, hindcast, hotspotsInBBox, liveSummary, outlook, seasonTiming } from "../src/lib/analytics";
 import { ensoLink, fireRegime, intensity, type OniFile } from "../src/lib/science";
+import type { EmissionsFile } from "../pipeline/harmonization-build";
 import { analyzeCountry, grid1HotspotsIn, normName, type CountriesFile, type CountrySummary, type Grid1File } from "../src/lib/global";
 import { analyzeAoi } from "../src/lib/harmonize";
 import { MONTHS, REGIONS, formatBBox } from "../src/lib/regions";
@@ -31,6 +32,7 @@ export interface ToolContext {
   global: { cf: CountriesFile; g1: Grid1File; summaries: CountrySummary[] } | null;
   getLive: () => Promise<LiveFile | null>;
   oni: OniFile | null;
+  emissions?: EmissionsFile | null;
   /** Area the user currently has selected, used when the model omits one. */
   current: { bbox: BBox; name: string; country?: string };
   emit: (action: DashboardAction) => void;
@@ -97,7 +99,7 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "get_fire_science",
     description:
-      "Scientific diagnostics for an area: (1) El Niño/La Niña link — Pearson r between pre-season NOAA ONI and the detrended fire-season anomaly, with p-value and % change per +1 °C; (2) fire intensity — VIIRS FRP per fire-day and night-time share with Mann-Kendall trends; (3) fire regime (Bangladesh detail only) — individual fires per year, size, duration, burned footprint, re-burn share and burn return interval.",
+      "Scientific diagnostics for an area: (1) El Niño/La Niña link — Pearson r between pre-season NOAA ONI and the detrended fire-season anomaly, with p-value and % change per +1 °C; (2) fire intensity — VIIRS FRP per fire-day and night-time share with Mann-Kendall trends; (3) CO2 and PM2.5 emissions from fire radiative energy; (4) fire regime (Bangladesh detail only) — individual fires per year, size, duration, burned footprint, re-burn share and burn return interval.",
     input_schema: { type: "object", properties: { ...AREA_PROPS } },
   },
   {
@@ -276,6 +278,10 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
       const intenName = isCountry ? (area.country === "World" ? null : area.country!) : "Bangladesh";
       const inten = ctx.global && (intenName === null || ctx.global.cf.countries.some((c) => c.name === intenName)) ? intensity(ctx.global.cf, intenName) : null;
       const regime = isCountry ? null : fireRegime(grid, area.bbox);
+      const emName = isCountry ? (area.country === "World" ? null : area.country!) : "Bangladesh";
+      const emRows = ctx.emissions ? (emName === null ? ctx.emissions.world.years : ctx.emissions.countries.find((c) => c.name === emName)?.years) : undefined;
+      const emF = ctx.emissions?.fields ?? [];
+      const emIx = (k: string) => emF.indexOf(k as never);
       return {
         area: area.name,
         enso_link: enso
@@ -290,6 +296,14 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
           : "not available (ONI not loaded or too few seasons)",
         intensity: inten
           ? { scope: intenName ?? "World", frp_mw_per_fire_day: inten.meanFrp, frp_trend: inten.frpTrend, night_share: inten.meanNight, night_trend: inten.nightTrend }
+          : "not available",
+        emissions: emRows
+          ? {
+              scope: emName ?? "World",
+              units: "Tg per year (CO2, PM2.5, dry matter); conservative (no cloud correction)",
+              recent_years: emRows.slice(-5).map((r, i) => ({ year: ctx.emissions!.lastYear - Math.min(4, emRows.length - 1) + i, co2: r[emIx("co2")], co2_range: [r[emIx("co2Lo")], r[emIx("co2Hi")]], pm25: r[emIx("pm25")], dry_matter: r[emIx("dm")] })),
+              method: "fire radiative energy × 0.368 kg/MJ × biome-generic emission factors",
+            }
           : "not available",
         fire_regime: regime
           ? {

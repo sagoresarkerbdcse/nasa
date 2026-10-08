@@ -1,11 +1,14 @@
 import { motion } from "framer-motion";
 import { ArrowDownRight, ArrowUpRight, Atom, Flame, Minus, Moon, Waves } from "lucide-react";
 import { useMemo } from "react";
-import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { fmt } from "../lib/color";
+import { mannKendall } from "../lib/harmonize";
 import type { CountriesFile } from "../lib/global";
 import { INTERVAL_LABELS, ensoLink, fireRegime, intensity, type EnsoRankRow, type OniFile } from "../lib/science";
 import type { AoiAnalysis, BBox, GridFile, TrendResult } from "../lib/types";
+import type { EmissionsFile } from "../../pipeline/harmonization-build";
+import { Wind } from "lucide-react";
 
 const axis = { fill: "#7b8494", fontSize: 10, fontFamily: "DM Mono" };
 const tip = {
@@ -56,12 +59,27 @@ interface Props {
   bbox: BBox;
   ensoRank: EnsoRankRow[] | null;
   onCountry?: (name: string) => void;
+  emissions?: EmissionsFile | null;
+  /** country for emissions (null = world) */
+  emissionsFor?: string | null;
 }
 
 const pv = (p: number) => (p < 0.001 ? "< 0.001" : `= ${p}`);
 const tone = (t: { r: number; p: number }) => (t.p < 0.05 ? (t.r > 0 ? "text-nasa-red" : "text-signal") : undefined);
 
-export function ScienceTab({ analysis, oni, cf, intensityFor, grid, bbox, ensoRank, onCountry }: Props) {
+export function ScienceTab({ analysis, oni, cf, intensityFor, grid, bbox, ensoRank, onCountry, emissions, emissionsFor }: Props) {
+  const em = useMemo(() => {
+    if (!emissions || emissionsFor === undefined) return null;
+    const rows = emissionsFor === null ? emissions.world.years : emissions.countries.find((c) => c.name === emissionsFor)?.years;
+    if (!rows) return null;
+    const f = emissions.fields;
+    const ix = (k: string) => f.indexOf(k as never);
+    const years = rows.map((r, i) => ({ year: emissions.firstYear + i, co2: r[ix("co2")], band: [r[ix("co2Lo")], r[ix("co2Hi")]] as [number, number], pm25: r[ix("pm25")], dm: r[ix("dm")] }));
+    const last10 = years.slice(-10);
+    const mean = (k: "co2" | "pm25" | "dm") => last10.reduce((s, y) => s + y[k], 0) / Math.max(last10.length, 1);
+    const trend = mannKendall(years.filter((y) => y.year >= 2012).map((y) => y.co2));
+    return { years, co2: mean("co2"), pm25: mean("pm25"), dm: mean("dm"), trend, name: emissionsFor ?? "World" };
+  }, [emissions, emissionsFor]);
   const enso = useMemo(() => (oni ? ensoLink(analysis, oni) : null), [analysis, oni]);
   const inten = useMemo(() => (cf && intensityFor !== undefined ? intensity(cf, intensityFor) : null), [cf, intensityFor]);
   const regime = useMemo(() => (grid ? fireRegime(grid, bbox) : null), [grid, bbox]);
@@ -158,6 +176,36 @@ export function ScienceTab({ analysis, oni, cf, intensityFor, grid, bbox, ensoRa
           <p className="text-[11px] leading-snug text-slate-400">
             Fire radiative power (FRP) is the heat a fire releases, measured by the satellite. Higher FRP per fire-day means hotter, fuel-rich fires (forests, peat). A large night share means fires that keep burning after dark, a sign of bigger or smouldering fires
             rather than quick daytime field burns.
+          </p>
+        </Section>
+      )}
+
+      {em && (
+        <Section icon={<Wind className="h-4 w-4" />} title={`Fire emissions · ${em.name} (from fire radiative energy)`} i={i++}>
+          <div className="grid grid-cols-3 gap-2">
+            <Stat label="CO₂ per year" value={`${fmt(Math.round(em.co2 * 10) / 10)} Tg`} sub="mean of the last 10 years" />
+            <Stat label="PM2.5 per year" value={`${fmt(Math.round(em.pm25 * 1000))} Gg`} sub="fine smoke particles" />
+            <Stat label="Biomass burned" value={`${fmt(Math.round(em.dm * 10) / 10)} Tg`} sub={<TrendTag t={{ ...em.trend, senSlope: Math.round(em.trend.senSlope * 10) / 10 }} unit=" Tg CO₂" />} />
+          </div>
+          <div className="h-[130px]">
+            <ResponsiveContainer>
+              <ComposedChart data={em.years} margin={{ top: 4, right: 6, left: -14, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="year" tick={axis} tickLine={false} axisLine={false} interval={3} />
+                <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={(v) => fmt(v)} />
+                <Tooltip {...tip} formatter={(v: unknown, n?: unknown) => (Array.isArray(v) ? [`${fmt(v[0])} – ${fmt(v[1])} Tg`, "range"] : [`${fmt(Number(v))} Tg`, String(n)])} />
+                <Area dataKey="band" name="range" stroke="none" fill="rgba(255,255,255,0.14)" isAnimationActive={false} />
+                <Line dataKey="co2" name="CO₂" stroke="#ff7a1a" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="text-[11px] leading-snug text-slate-400">
+            Fire radiative energy (heat released over the whole day, from the satellites' fire-power measurements and the daily fire cycle) × 0.368 kg of biomass per MJ, × emission factors. Shaded: range across biomes and harmonization uncertainty. Fires under clouds are not counted, so these
+            are conservative. Method:{" "}
+            <a href="/lab" className="text-signal hover:underline">
+              Harmonization Lab
+            </a>
+            .
           </p>
         </Section>
       )}

@@ -332,6 +332,14 @@ function science(r: any): string {
     out.push(
       `- **Intensity (${i.scope}, VIIRS):** ${i.frp_mw_per_fire_day} MW of fire radiative power per fire-day${i.frp_trend.significant ? `, trending ${i.frp_trend.senSlope > 0 ? "up" : "down"} (p = ${i.frp_trend.pValue})` : ", no significant trend"}; ${Math.round(i.night_share * 100)}% of detections at night${i.night_trend.significant ? ` (trending ${i.night_trend.senSlope > 0 ? "up" : "down"})` : ""}.`,
     );
+  const em = r.emissions;
+  if (typeof em === "object" && em.recent_years?.length) {
+    const last = em.recent_years[em.recent_years.length - 1];
+    const mean = (k: string) => em.recent_years.reduce((s: number, y: Record<string, number>) => s + y[k], 0) / em.recent_years.length;
+    out.push(
+      `- **Emissions (${em.scope}):** about **${mean("co2").toFixed(1)} Tg CO₂** and **${(mean("pm25") * 1000).toFixed(0)} Gg PM2.5** a year (last ${em.recent_years.length} years; ${last.year}: ${last.co2.toFixed(1)} Tg CO₂, range ${last.co2_range[0].toFixed(1)}–${last.co2_range[1].toFixed(1)}). Conservative: fires under clouds are not counted.`,
+    );
+  }
   const g = r.fire_regime;
   if (typeof g === "object") {
     const n = g.fires_per_year.length || 1;
@@ -344,5 +352,5 @@ function science(r: any): string {
   return out.join("\n");
 }
 
-const SCIENCE_RE = /el ni|la ni|enso|climate|pacific|frp|radiative|intensity|night|re-?burn|return interval|fire size|individual fire|regime|science/;
+const SCIENCE_RE = /el ni|la ni|enso|climate|pacific|frp|radiative|intensity|night|re-?burn|return interval|fire size|individual fire|regime|science|emission|co2|carbon|smoke|pm2|biomass/;
 const pv = (p: number) => (p < 0.001 ? "< 0.001" : `= ${p}`);

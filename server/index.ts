@@ -11,6 +11,7 @@
  * user's map. Without credentials an offline analyst uses the same tools.
  */
 import type { OniFile } from "../src/lib/science";
+import type { EmissionsFile } from "../pipeline/harmonization-build";
 import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 import { existsSync, readFileSync } from "node:fs";
@@ -42,6 +43,7 @@ const global = (() => {
 })();
 
 const oni: OniFile | null = existsSync(join(dataDir, "oni.json")) ? JSON.parse(readFileSync(join(dataDir, "oni.json"), "utf8")) : null;
+const emissions: EmissionsFile | null = existsSync(join(dataDir, "global/emissions.json")) ? JSON.parse(readFileSync(join(dataDir, "global/emissions.json"), "utf8")) : null;
 
 // Provider: OpenRouter (low-cost, budget-capped) > Anthropic > offline analyst.
 const PROVIDER: "openrouter" | "anthropic" | "offline" = OPENROUTER.key
@@ -189,6 +191,7 @@ app.post("/api/analyst", async (req, res) => {
     global,
     getLive: async () => (await getLive())?.data ?? null,
     oni,
+    emissions,
     current: { bbox: body.bbox, name: regionName, ...(scopeCountry ? { country: scopeCountry } : {}) },
     emit: (action: DashboardAction) => send({ type: "action", action }),
   };

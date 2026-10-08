@@ -8,6 +8,7 @@ import { ScienceTab } from "./components/ScienceTab";
 import { DataSourcesModal } from "./components/DataSources";
 import { Guide, guideSeen } from "./components/Guide";
 import { ensoRanking, type OniFile } from "./lib/science";
+import type { EmissionsFile } from "../pipeline/harmonization-build";
 import { Header } from "./components/Header";
 import { KpiStrip } from "./components/KpiStrip";
 import { MapPanel } from "./components/MapPanel";
@@ -51,11 +52,16 @@ function DashboardApp() {
   const [global, setGlobal] = useState<GlobalData | null>(null);
   const [globalStatus, setGlobalStatus] = useState<"loading" | "ready" | "missing">("loading");
   const [oni, setOni] = useState<OniFile | null>(null);
+  const [emissions, setEmissions] = useState<EmissionsFile | null>(null);
 
   useEffect(() => {
     fetch("/data/oni.json")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setOni(d))
+      .catch(() => {});
+    fetch("/data/global/emissions.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setEmissions(d))
       .catch(() => {});
     Promise.all([fetch("/data/global/countries.json"), fetch("/data/global/grid1.json")])
       .then(async ([a, b]) => {
@@ -94,7 +100,7 @@ function DashboardApp() {
 
   return (
     <div className="space-bg min-h-full lg:h-full">
-      {grid && <Dashboard grid={grid} points={points} health={health} live={live} global={global} globalStatus={globalStatus} oni={oni} booted={booted} />}
+      {grid && <Dashboard grid={grid} points={points} health={health} live={live} global={global} globalStatus={globalStatus} oni={oni} emissions={emissions} booted={booted} />}
       <AnimatePresence>{!booted && <BootScreen key="boot" ready={Boolean(grid)} error={error} onDone={done} />}</AnimatePresence>
     </div>
   );
@@ -143,6 +149,7 @@ function Dashboard({
   global,
   globalStatus,
   oni,
+  emissions,
   booted,
 }: {
   grid: GridFile;
@@ -152,6 +159,7 @@ function Dashboard({
   global: GlobalData | null;
   globalStatus: "loading" | "ready" | "missing";
   oni: OniFile | null;
+  emissions: EmissionsFile | null;
   booted: boolean;
 }) {
   const init = useRef(readHash()).current;
@@ -486,6 +494,8 @@ function Dashboard({
                 <ScienceTab
                   analysis={analysis}
                   oni={oni}
+                  emissions={emissions}
+                  emissionsFor={worldMode ? (countryEntry?.name ?? null) : "Bangladesh"}
                   cf={global?.cf ?? null}
                   intensityFor={worldMode ? (countryEntry?.name ?? null) : global?.cf.countries.some((c) => c.name === "Bangladesh") ? "Bangladesh" : undefined}
                   grid={worldMode ? null : grid}
