@@ -83,7 +83,7 @@ const STEPS: Step[] = [
     target: "actions",
     kicker: "Share it",
     title: "Explain, present, revisit",
-    body: "Explain opens animated stories for kids, teens and seniors. Present runs a guided story for an audience. The compass reopens this tour; the i button explains the method.",
+    body: "Lab shows the science: blind validation, how often MODIS sees fires, orbit drift, emissions, and the open dataset with a citation. Explain opens animated stories for kids, teens and seniors. Present runs a guided story for an audience. The compass reopens this tour.",
   },
 ];
 

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { BookOpen, Compass, Database, FlaskConical, Info, Presentation } from "lucide-react";
+import { BookOpen, Compass, Database, FlaskConical, Info, Presentation, Sigma } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { GridFile } from "../lib/types";
 
@@ -138,6 +138,9 @@ export function Header({ meta, harmonized, onHarmonized, onAbout, onPresent, onS
           </div>
 
           <div className="flex items-center gap-2" data-guide="actions">
+          <a href="/lab" className="hidden items-center gap-1.5 rounded-[4px] border border-white/10 px-2.5 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-slate-200 transition-colors hover:border-signal/60 lg:flex" title="Harmonization Lab: method, validation, detection model, orbit drift, emissions, open dataset">
+            <Sigma className="h-3.5 w-3.5 text-signal" /> Lab
+          </a>
           <a href="/explain" className="hidden items-center gap-1.5 rounded-[4px] border border-white/10 px-2.5 py-1.5 font-mono text-[10.5px] uppercase tracking-wider text-slate-200 transition-colors hover:border-signal/60 md:flex">
             <BookOpen className="h-3.5 w-3.5 text-signal" /> Explain
           </a>
