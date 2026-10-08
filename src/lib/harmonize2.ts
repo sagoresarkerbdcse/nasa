@@ -4,7 +4,7 @@
  *
  *   VIIRS-equivalent fire-days(month m) = k[m] × MODIS fire-days + floor[m]
  *
- * k[m]     ratio of VIIRS to MODIS fire-days in a ±1-month season window, from the
+ * k[m]     ratio of VIIRS to MODIS fire-days in a season window (month ±1 at ¼ weight), from the
  *          overlap training years, shrunk toward the unit's annual ratio, which is
  *          shrunk toward its parent (region / world): empirical-Bayes style, with a
  *          prior worth N0 MODIS fire-days at each level.
@@ -86,10 +86,11 @@ function seasonSums(s: Series, firstYear: number, years: number[]) {
       const vv = at(s.V, b + m);
       mAll += mm;
       vAll += vv;
-      for (const d of [-1, 0, 1]) {
+      // Season window: neighbouring months at quarter weight (chosen by the blind test over ±1 equal, ½ and none).
+      for (const [d, w] of [[-1, 0.25], [0, 1], [1, 0.25]]) {
         const t = (m + d + 12) % 12;
-        M[t] += mm;
-        V[t] += vv;
+        M[t] += w * mm;
+        V[t] += w * vv;
       }
     }
   }
@@ -106,7 +107,8 @@ function seasonalK(s: Series, firstYear: number, years: number[], prior: number,
 /** VIIRS minus the floor (for re-estimating k on the part MODIS can see). */
 function subtractFloor(s: Series, firstYear: number, years: number[], floor: number[]): Series {
   const V = Array.from(s.V as ArrayLike<number>);
-  for (const y of years) {
+  // A bootstrap sample repeats years: subtract the floor once per distinct year.
+  for (const y of new Set(years)) {
     const b = (y - firstYear) * 12;
     for (let m = 0; m < 12; m++) if (b + m < V.length) V[b + m] = Math.max(0, V[b + m] - floor[m]);
   }
@@ -126,11 +128,14 @@ function floorOf(s: Series, firstYear: number, years: number[], k: number[]) {
 export function fitUnit(s: Series, opt: FitOptions, parent: { kAnnual: number; sigma: number; sigmaAnnual?: number }): UnitModel {
   const n0 = opt.n0 ?? N0;
   const years = opt.trainYears;
-  // Two passes: k on everything → floor → k on what MODIS can see.
+  // Alternate k (on what MODIS can see) and the floor (what it cannot) to a consistent pair,
+  // always finishing with k fitted to the final floor.
   let { k, kAnn, n } = seasonalK(s, opt.firstYear, years, parent.kAnnual, n0);
-  let floor = floorOf(s, opt.firstYear, years, k);
-  ({ k, kAnn, n } = seasonalK(s, opt.firstYear, years, parent.kAnnual, n0, floor));
-  floor = floorOf(s, opt.firstYear, years, k);
+  let floor = new Array(12).fill(0);
+  for (let it = 0; it < 4; it++) {
+    floor = floorOf(s, opt.firstYear, years, k);
+    ({ k, kAnn, n } = seasonalK(s, opt.firstYear, years, parent.kAnnual, n0, floor));
+  }
 
   // Year-block bootstrap for the spread of k.
   const B = opt.boot ?? 60;
@@ -149,12 +154,14 @@ export function fitUnit(s: Series, opt: FitOptions, parent: { kAnnual: number; s
   for (const y of years) {
     const rest = years.filter((x) => x !== y);
     if (!rest.length) break;
-    const ky = seasonalK(s, opt.firstYear, rest, parent.kAnnual, n0, floor).k;
+    // refit both k and the floor without year y
+    const fy = floorOf(s, opt.firstYear, rest, seasonalK(s, opt.firstYear, rest, parent.kAnnual, n0, floor).k);
+    const ky = seasonalK(s, opt.firstYear, rest, parent.kAnnual, n0, fy).k;
     let pa = 0;
     let va = 0;
     for (let m = 0; m < 12; m++) {
       const i = (y - opt.firstYear) * 12 + m;
-      const pred = ky[m] * at(s.M, i) + floor[m];
+      const pred = ky[m] * at(s.M, i) + fy[m];
       const v = at(s.V, i);
       pa += pred;
       va += v;
